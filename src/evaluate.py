@@ -92,7 +92,7 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
 
     input_dim = DUAL_FEATURE_DIM if dual else FEATURE_DIM
     model = NavahiClassifier(input_dim=input_dim).to(device)
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
