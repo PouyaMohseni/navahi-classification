@@ -37,7 +37,7 @@ from config import (
     FEATURES_DUAL_DIR,
     MERT_MODEL, MERT_LAYERS, MERT_SAMPLE_RATE,
     VOCAL_MODEL, VOCAL_LAYERS, VOCAL_EMBED_DIM,
-    SEGMENT_SEC, CHUNK_SEC,
+    SEGMENT_SEC,
     FEATURE_DIM, VOCAL_FEATURE_DIM, DUAL_FEATURE_DIM,
 )
 
@@ -139,35 +139,22 @@ def extract_dual_features(
     device: torch.device,
 ) -> np.ndarray:
     """
-    Returns array of shape (N_chunks, DUAL_FEATURE_DIM).
-    Each row = [instru_embed (2304) | vocals_embed (3072)].
+    Returns array of shape (N_segs, DUAL_FEATURE_DIM).
+    Each row = [instru_embed (2304) | vocals_embed (3072)] for one 5-second segment.
     """
     vocals_full, instru_full = separate_stems(audio_path, device)
 
-    # Chunk at CHUNK_SEC level
-    vocal_chunks = segment(vocals_full, MERT_SAMPLE_RATE, CHUNK_SEC)
-    instru_chunks = segment(instru_full, MERT_SAMPLE_RATE, CHUNK_SEC)
-    n_chunks = min(len(vocal_chunks), len(instru_chunks))
+    vocal_segs = segment(vocals_full, MERT_SAMPLE_RATE, SEGMENT_SEC)
+    instru_segs = segment(instru_full, MERT_SAMPLE_RATE, SEGMENT_SEC)
+    n_segs = min(len(vocal_segs), len(instru_segs))
 
-    chunk_embeds = []
-    for ci in range(n_chunks):
-        vocal_subs = segment(vocal_chunks[ci], MERT_SAMPLE_RATE, SEGMENT_SEC)
-        instru_subs = segment(instru_chunks[ci], MERT_SAMPLE_RATE, SEGMENT_SEC)
-        n_subs = min(len(vocal_subs), len(instru_subs))
+    embeds = []
+    for i in range(n_segs):
+        instru_vec = embed_mert(instru_segs[i], mert_model, mert_proc, device, MERT_LAYERS)
+        vocal_vec  = embed_wav2vec2(vocal_segs[i], wav2vec_model, wav2vec_proc, device, VOCAL_LAYERS)
+        embeds.append(np.concatenate([instru_vec, vocal_vec]))  # (5376,)
 
-        sub_instru, sub_vocal = [], []
-        for si in range(n_subs):
-            sub_instru.append(embed_mert(instru_subs[si], mert_model, mert_proc,
-                                         device, MERT_LAYERS))
-            sub_vocal.append(embed_wav2vec2(vocal_subs[si], wav2vec_model, wav2vec_proc,
-                                            device, VOCAL_LAYERS))
-
-        # Mean-pool over sub-segments, then concatenate streams
-        mean_instru = np.stack(sub_instru).mean(0)   # (2304,)
-        mean_vocal  = np.stack(sub_vocal).mean(0)    # (3072,)
-        chunk_embeds.append(np.concatenate([mean_instru, mean_vocal]))  # (5376,)
-
-    return np.stack(chunk_embeds).astype(np.float32)
+    return np.stack(embeds).astype(np.float32)  # (N_segs, 5376)
 
 
 # ── Split processing ───────────────────────────────────────────────────────────

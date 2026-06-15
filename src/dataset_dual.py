@@ -1,12 +1,13 @@
 """
 NavahiDualDataset: loads dual-stream (instruments + vocals) pre-extracted features.
 
-Each sample is one 60-second chunk:
-  x:      float32 tensor (DUAL_FEATURE_DIM,)  [instruments(2304) | vocals(3072)]
-  label:  int in [0, 7]
-  coords: float32 tensor (2,)
+Features on disk: (N_segs, 5376) — one row per 5-second segment.
+  [instruments via MERT (2304) | vocals via wav2vec2-xlsr-53 (3072)]
 
-Identical interface to NavahiDataset — swap dataset class to switch streams.
+window_size controls how many consecutive 5-second segments are mean-pooled:
+  window_size=1   → each 5s segment is its own sample (training)
+  window_size=12  → sliding window = 60s evaluation (stride=1)
+  window_size=6   → sliding window = 30s evaluation (stride=1)
 """
 
 import os
@@ -59,19 +60,23 @@ def _load_split_metadata(split):
             continue
         label = _GENRE_TO_LABEL[genre]
         lat, lon = r[lat_col], r[lon_col]
-        if lat and lon:
-            coords = _normalize_coords(float(lat), float(lon))
-        else:
-            coords = _normalize_coords(*CLASS_COORDS[label])
+        coords = _normalize_coords(float(lat), float(lon)) if (lat and lon) \
+                 else _normalize_coords(*CLASS_COORDS[label])
         stem = os.path.splitext(fname)[0]
         records.append((stem, label, coords))
     return records
 
 
 class NavahiDualDataset(Dataset):
-    def __init__(self, split: str = "train"):
+    """
+    window_size=1  → one sample per 5-second segment (training)
+    window_size=W  → sliding window of W 5-second segments, mean-pooled (eval)
+    """
+
+    def __init__(self, split: str = "train", window_size: int = 1):
         assert split in ("train", "val", "test")
-        self.samples = []
+        self.window_size = window_size
+        self.samples = []   # (feat_path, start_seg_idx, label, coords)
 
         feat_dir = os.path.join(FEATURES_DUAL_DIR, split)
         metadata = _load_split_metadata(split)
@@ -82,9 +87,10 @@ class NavahiDualDataset(Dataset):
             if not os.path.exists(feat_path):
                 missing += 1
                 continue
-            n_chunks = np.load(feat_path, mmap_mode="r").shape[0]
-            for ci in range(n_chunks):
-                self.samples.append((feat_path, ci, label, coords))
+            n_segs = np.load(feat_path, mmap_mode="r").shape[0]
+            n_windows = max(1, n_segs - window_size + 1)
+            for start in range(n_windows):
+                self.samples.append((feat_path, start, label, coords))
 
         if missing:
             print(f"[NavahiDualDataset/{split}] {missing}/{len(metadata)} files "
@@ -94,6 +100,8 @@ class NavahiDualDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        feat_path, ci, label, coords = self.samples[idx]
-        x = torch.from_numpy(np.load(feat_path)[ci].astype(np.float32))
+        feat_path, start, label, coords = self.samples[idx]
+        feats = np.load(feat_path)
+        window = feats[start:start + self.window_size]
+        x = torch.from_numpy(window.mean(axis=0).astype(np.float32))
         return x, label, torch.from_numpy(coords)

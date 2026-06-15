@@ -1,12 +1,18 @@
 """
 NavahiDataset: loads pre-extracted MERT features using the official Split9 split.
 
-Each sample is one 60-second chunk from an audio file:
-  - x:      float32 tensor (FEATURE_DIM,)  [2304-dim MERT embedding]
-  - label:  int in [0, 7]
-  - coords: float32 tensor (2,)  [normalized lat, lon in [0, 1]]
+Features on disk: (N_segs, 2304) — one row per 5-second segment.
 
-Lat/lon come from Split9 per-file annotations (State_x, State_y columns).
+window_size controls how many consecutive 5-second segments are mean-pooled
+into one sample:
+  window_size=1   → each 5s segment is its own sample (used for training)
+  window_size=12  → sliding window of 12 segments = 60s evaluation (stride=1)
+  window_size=6   → sliding window of 6 segments  = 30s evaluation (stride=1)
+
+Each __getitem__ returns:
+  x:      float32 tensor (FEATURE_DIM,)
+  label:  int in [0, 7]
+  coords: float32 tensor (2,)  [normalized lat, lon in [0, 1]]
 """
 
 import os
@@ -23,16 +29,15 @@ from config import (
     LAT_MIN, LAT_MAX, LON_MIN, LON_MAX,
 )
 
-# Map Genre column values → integer labels
 _GENRE_TO_LABEL = {
-    "Gilan":             0,
-    "Lorestan":          1,
-    "Khorasan":          2,
-    "Kordestan":         3,
-    "Azerbaijan":        4,
-    "Sistan&Baluchestan":5,
-    "Turkaman":          6,
-    "Bushehr":           7,
+    "Gilan":              0,
+    "Lorestan":           1,
+    "Khorasan":           2,
+    "Kordestan":          3,
+    "Azerbaijan":         4,
+    "Sistan&Baluchestan": 5,
+    "Turkaman":           6,
+    "Bushehr":            7,
 }
 
 
@@ -42,11 +47,7 @@ def _normalize_coords(lat: float, lon: float) -> np.ndarray:
     return np.clip(np.array([lat_n, lon_n], dtype=np.float32), 0.0, 1.0)
 
 
-def _load_split_metadata(split: str) -> list[tuple[str, int, np.ndarray]]:
-    """
-    Returns list of (filename_stem, label, coords_normalized) from Split9/<split>.xlsx.
-    Rows with missing genre or coordinates are skipped.
-    """
+def _load_split_metadata(split: str) -> list:
     path = os.path.join(SPLIT9_DIR, f"{split}.xlsx")
     wb = openpyxl.load_workbook(path)
     ws = wb.active
@@ -67,7 +68,6 @@ def _load_split_metadata(split: str) -> list[tuple[str, int, np.ndarray]]:
         if lat and lon:
             coords = _normalize_coords(float(lat), float(lon))
         else:
-            # Fall back to class-level mean from config
             from config import CLASS_COORDS
             coords = _normalize_coords(*CLASS_COORDS[label])
         stem = os.path.splitext(fname)[0]
@@ -76,9 +76,16 @@ def _load_split_metadata(split: str) -> list[tuple[str, int, np.ndarray]]:
 
 
 class NavahiDataset(Dataset):
-    def __init__(self, split: str = "train"):
+    """
+    window_size=1  → one sample per 5-second segment (training)
+    window_size=W  → sliding window of W 5-second segments, mean-pooled (eval)
+    """
+
+    def __init__(self, split: str = "train", window_size: int = 1):
         assert split in ("train", "val", "test")
-        self.samples = []  # (feat_path, chunk_idx, label, coords)
+        self.window_size = window_size
+        # samples: (feat_path, start_seg_idx, label, coords)
+        self.samples = []
 
         feat_split_dir = os.path.join(FEATURES_DIR, split)
         metadata = _load_split_metadata(split)
@@ -89,18 +96,22 @@ class NavahiDataset(Dataset):
             if not os.path.exists(feat_path):
                 missing += 1
                 continue
-            n_chunks = np.load(feat_path, mmap_mode="r").shape[0]
-            for chunk_idx in range(n_chunks):
-                self.samples.append((feat_path, chunk_idx, label, coords))
+            n_segs = np.load(feat_path, mmap_mode="r").shape[0]
+            # number of valid window start positions
+            n_windows = max(1, n_segs - window_size + 1)
+            for start in range(n_windows):
+                self.samples.append((feat_path, start, label, coords))
 
         if missing:
-            print(f"[NavahiDataset/{split}] {missing}/{len(metadata)} files missing features — run extract_features.py first")
+            print(f"[NavahiDataset/{split}] {missing}/{len(metadata)} files missing — "
+                  f"run extract_features.py first")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        feat_path, chunk_idx, label, coords = self.samples[idx]
-        feats = np.load(feat_path)
-        x = torch.from_numpy(feats[chunk_idx].astype(np.float32))
+        feat_path, start, label, coords = self.samples[idx]
+        feats = np.load(feat_path)           # (N_segs, 2304)
+        window = feats[start:start + self.window_size]
+        x = torch.from_numpy(window.mean(axis=0).astype(np.float32))
         return x, label, torch.from_numpy(coords)

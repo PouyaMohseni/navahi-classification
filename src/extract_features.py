@@ -3,13 +3,15 @@ Extract MERT embeddings from all audio files referenced in Split9 and save to di
 
 For each audio file:
   1. RMS-normalize to -20 dB
-  2. Segment into non-overlapping 60-second chunks
-  3. Each 60-second chunk → twelve 5-second sub-segments
-  4. Run MERT on each 5-second sub-segment
-  5. Mean-pool each layer over the time dimension
-  6. Concatenate layers 6, 7, 8 → 2304-dim vector per sub-segment
-  7. Mean-pool over 12 sub-segments → 2304-dim vector per 60-second chunk
-  8. Save as features/<split>/<filename_stem>.npy  shape (N_chunks, 2304)
+  2. Segment into non-overlapping 5-second windows
+  3. Run MERT on each 5-second segment
+  4. Mean-pool each layer over the time dimension → 768-dim per layer
+  5. Concatenate layers 6, 7, 8 → 2304-dim per 5-second segment
+  6. Save as features/<split>/<filename_stem>.npy  shape (N_segs, 2304)
+
+At train time each row is an independent sample.
+At eval time a sliding window of W rows (stride=1) is mean-pooled to produce
+one W*5-second evaluation sample (W=12 → 60s, W=6 → 30s).
 
 Usage:
     python src/extract_features.py [--split train|val|test|all]
@@ -31,7 +33,7 @@ from config import (
     NAVAHI_ROOT, DATA_ROOT, SPLIT9_DIR, AUDIO_ROOT,
     FEATURES_DIR,
     MERT_MODEL, MERT_LAYERS, MERT_SAMPLE_RATE,
-    SEGMENT_SEC, CHUNK_SEC,
+    SEGMENT_SEC,
 )
 
 TARGET_DB = -20.0
@@ -100,31 +102,25 @@ def segment_audio(audio: np.ndarray, seg_sec: int) -> list[np.ndarray]:
 
 @torch.no_grad()
 def extract_file_features(audio_path, model, processor, device) -> np.ndarray:
-    """Returns (N_chunks, FEATURE_DIM) float32 array."""
+    """Returns (N_segs, FEATURE_DIM) float32 array — one row per 5-second segment."""
     audio = load_audio(audio_path)
-    chunks = segment_audio(audio, CHUNK_SEC)
-    chunk_embeds = []
+    segments = segment_audio(audio, SEGMENT_SEC)
+    embeds = []
 
-    for chunk in chunks:
-        sub_segments = segment_audio(chunk, SEGMENT_SEC)
-        sub_embeds = []
+    for seg in segments:
+        inputs = processor(seg, sampling_rate=MERT_SAMPLE_RATE, return_tensors="pt", padding=True)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        outputs = model(**inputs, output_hidden_states=True)
 
-        for sub in sub_segments:
-            inputs = processor(sub, sampling_rate=MERT_SAMPLE_RATE, return_tensors="pt", padding=True)
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            outputs = model(**inputs, output_hidden_states=True)
+        layer_vecs = []
+        for layer_idx in MERT_LAYERS:
+            hidden = outputs.hidden_states[layer_idx]  # (1, T, 768)
+            vec = hidden.mean(dim=1).squeeze(0).cpu().numpy()
+            layer_vecs.append(vec)
 
-            layer_vecs = []
-            for layer_idx in MERT_LAYERS:
-                hidden = outputs.hidden_states[layer_idx]  # (1, T, 768)
-                vec = hidden.mean(dim=1).squeeze(0).cpu().numpy()
-                layer_vecs.append(vec)
+        embeds.append(np.concatenate(layer_vecs))  # (2304,)
 
-            sub_embeds.append(np.concatenate(layer_vecs))  # (2304,)
-
-        chunk_embeds.append(np.stack(sub_embeds).mean(axis=0))  # (2304,)
-
-    return np.stack(chunk_embeds).astype(np.float32)  # (N_chunks, 2304)
+    return np.stack(embeds).astype(np.float32)  # (N_segs, 2304)
 
 
 def process_split(split: str, file_index: dict, model, processor, device):
