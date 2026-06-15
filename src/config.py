@@ -2,11 +2,14 @@ import os
 
 # Paths — override with env vars for cluster runs
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_default_audio = os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi", "Navahi-Dataset")
+_default_navahi = os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi")
 _default_features = os.path.join(PROJECT_ROOT, "features")
 _default_checkpoints = os.path.join(PROJECT_ROOT, "checkpoints")
 
-AUDIO_ROOT = os.environ.get("NAVAHI_AUDIO_ROOT", _default_audio)
+NAVAHI_ROOT = os.environ.get("NAVAHI_ROOT", _default_navahi)
+AUDIO_ROOT = os.path.join(NAVAHI_ROOT, "Navahi-Dataset")   # fallback: folder-based
+DATA_ROOT = os.path.join(NAVAHI_ROOT, "Data")               # Mahoor/Spotify/Cassette/AppleMusic
+SPLIT9_DIR = os.path.join(NAVAHI_ROOT, "Split9")            # official split xlsx files
 FEATURES_DIR = os.environ.get("NAVAHI_FEATURES_DIR", _default_features)
 CHECKPOINTS_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DIR", _default_checkpoints)
 

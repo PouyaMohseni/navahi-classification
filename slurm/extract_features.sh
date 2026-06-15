@@ -13,13 +13,13 @@ mkdir -p logs
 
 # ── Paths (adjust if your scratch layout differs) ────────────────────────────
 SCRATCH=/lustre07/scratch/pmohseni
-DATASET_DIR=$SCRATCH/datasets/Navahi/Navahi-Dataset
+NAVAHI_ROOT=$SCRATCH/datasets/Navahi          # directory containing Navahi-Dataset/, Split9/, Data/
 FEATURES_DIR=$SCRATCH/navahi-features
 CHECKPOINTS_DIR=$SCRATCH/navahi-checkpoints
-CODE_DIR=$SCRATCH/navahi-classification   # where you cloned the repo
+CODE_DIR=$SCRATCH/navahi-classification       # where you cloned the repo
 # ─────────────────────────────────────────────────────────────────────────────
 
-export NAVAHI_AUDIO_ROOT=$DATASET_DIR
+export NAVAHI_ROOT=$NAVAHI_ROOT
 export NAVAHI_FEATURES_DIR=$FEATURES_DIR
 export NAVAHI_CHECKPOINTS_DIR=$CHECKPOINTS_DIR
 
