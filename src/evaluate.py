@@ -18,8 +18,9 @@ from torch.utils.data import DataLoader
 from sklearn.metrics import balanced_accuracy_score, precision_score, recall_score, f1_score, r2_score
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import NUM_CLASSES, BATCH_SIZE, CLASS_NAMES
+from config import NUM_CLASSES, BATCH_SIZE, CLASS_NAMES, FEATURE_DIM, DUAL_FEATURE_DIM
 from dataset import NavahiDataset
+from dataset_dual import NavahiDualDataset
 from model import NavahiClassifier
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -79,20 +80,29 @@ def print_metrics(m: dict, header: str = ""):
 
 
 @torch.no_grad()
-def evaluate(checkpoint_path: str, split: str = "test", device: torch.device = None):
+def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
+             device: torch.device = None):
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else
                               "mps" if torch.backends.mps.is_available() else "cpu")
 
-    model = NavahiClassifier().to(device)
+    if not os.path.exists(checkpoint_path):
+        print(f"ERROR: checkpoint not found: {checkpoint_path}")
+        return None
+
+    input_dim = DUAL_FEATURE_DIM if dual else FEATURE_DIM
+    model = NavahiClassifier(input_dim=input_dim).to(device)
     ckpt = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    ds = NavahiDataset(split)
+    ds = NavahiDualDataset(split) if dual else NavahiDataset(split)
+    if len(ds) == 0:
+        print(f"ERROR: 0 samples found for split='{split}' (dual={dual}). Features missing?")
+        return None
     pin = device.type == "cuda"
     loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=pin)
-    print(f"Evaluating on {split} ({len(ds)} samples)")
+    print(f"Evaluating on {split} ({len(ds)} samples, dual={dual})")
 
     all_preds, all_labels, all_cp, all_ct = [], [], [], []
     for x, labels, coords in loader:
@@ -129,8 +139,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", default=os.path.join(PROJECT_ROOT, "checkpoints", "best_model.pt"))
     parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser.add_argument("--dual", action="store_true", help="Use dual-stream dataset and model")
     args = parser.parse_args()
-    evaluate(args.checkpoint, args.split)
+    evaluate(args.checkpoint, args.split, dual=args.dual)
 
 
 if __name__ == "__main__":

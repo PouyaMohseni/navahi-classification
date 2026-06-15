@@ -139,7 +139,7 @@ python src/evaluate.py --checkpoint $CHECKPOINTS_DIR/best_model.pt --split test
 
 echo ''
 echo '=== Dual-stream ==='
-python src/evaluate.py --checkpoint $CHECKPOINTS_DUAL_DIR/best_model.pt --split test
+python src/evaluate.py --checkpoint $CHECKPOINTS_DUAL_DIR/best_model.pt --split test --dual
 echo 'Evaluation done.'")
 
 echo "Submitted evaluate         -> job $JOB5  (after $JOB3 and $JOB4)"

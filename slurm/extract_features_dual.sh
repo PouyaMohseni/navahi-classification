@@ -24,7 +24,7 @@ export NAVAHI_CHECKPOINTS_DUAL_DIR=$CHECKPOINTS_DUAL_DIR
 module load python/3.11
 module load cuda/12.2
 
-source $SCRATCH/navahi-venv/bin/activate
+source ~/navahi-venv/bin/activate
 pip install -q demucs
 
 cd $CODE_DIR

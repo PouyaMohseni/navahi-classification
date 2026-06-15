@@ -17,8 +17,8 @@ set -e
 
 SCRATCH=/lustre07/scratch/pmohseni
 CODE_DIR=$SCRATCH/navahi-classification
-VENV=$SCRATCH/navahi-venv
-HF_CACHE=$SCRATCH/hf-cache    # all model weights land here
+VENV=~/navahi-venv             # home dir avoids lustre I/O issues with pip
+HF_CACHE=$SCRATCH/hf-cache    # model weights on scratch (large files ok)
 
 echo "======================================================"
 echo " Navahi setup — login node"

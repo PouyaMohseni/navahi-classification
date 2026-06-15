@@ -72,31 +72,35 @@ def segment(audio: np.ndarray, sr: int, sec: int) -> list:
 
 def separate_stems(audio_path: str, device: torch.device) -> tuple:
     """
-    Returns (vocals_np, instruments_np) at 44100 Hz (Demucs native SR),
-    then resampled to MERT_SAMPLE_RATE.
-    instruments = drums + bass + other (avoids the routing problem with
-    non-Western instruments being classified as 'vocals').
+    Returns (vocals_np, instruments_np) resampled to MERT_SAMPLE_RATE.
+    instruments = drums + bass + other (avoids non-Western instrument
+    misrouting into the vocals stem).
+    Uses demucs lower-level API (works across all demucs 4.x versions).
     """
-    from demucs.api import Separator
+    from demucs.pretrained import get_model
+    from demucs.apply import apply_model
     from demucs.audio import convert_audio
 
-    sep = Separator(model="htdemucs", device=str(device), progress=False)
+    model = get_model("htdemucs")
+    model.to(device)
+    model.eval()
+
     wav, sr = torchaudio.load(audio_path)
-    wav = convert_audio(wav, sr, sep.samplerate, sep.audio_channels)
+    wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
+    wav = wav.unsqueeze(0).to(device)   # (1, channels, samples)
 
-    _, stems = sep.separate_tensor(wav)
-    # stems is a dict: {stem_name: tensor (channels, samples)}
+    with torch.no_grad():
+        sources = apply_model(model, wav, device=device)[0]  # (stems, channels, samples)
 
-    vocals = stems["vocals"].mean(0).cpu().numpy()             # mono
+    stem_names = model.sources   # ['drums', 'bass', 'other', 'vocals']
+    stems = {name: sources[i] for i, name in enumerate(stem_names)}
+
+    vocals = stems["vocals"].mean(0).cpu().numpy()
     instru = (stems["drums"] + stems["bass"] + stems["other"]).mean(0).cpu().numpy()
 
-    # Resample both to MERT_SAMPLE_RATE
-    def resamp(x, orig_sr):
-        return librosa.resample(x, orig_sr=orig_sr, target_sr=MERT_SAMPLE_RATE)
-
-    native_sr = sep.samplerate
-    vocals = rms_normalize(resamp(vocals, native_sr))
-    instru = rms_normalize(resamp(instru, native_sr))
+    native_sr = model.samplerate
+    vocals = rms_normalize(librosa.resample(vocals, orig_sr=native_sr, target_sr=MERT_SAMPLE_RATE))
+    instru = rms_normalize(librosa.resample(instru, orig_sr=native_sr, target_sr=MERT_SAMPLE_RATE))
     return vocals, instru
 
 
