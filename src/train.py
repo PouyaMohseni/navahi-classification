@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED, CHECKPOINTS_DIR
+from config import BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED, CHECKPOINTS_DIR, NUM_CLASSES
 from dataset import NavahiDataset
 from model import NavahiClassifier
 from evaluate import compute_metrics
@@ -110,11 +110,23 @@ def main():
     val_ds = NavahiDataset("val")
     print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
 
+    # Class-balanced loss weights: inverse frequency per class
+    from collections import Counter
+    import torch.nn as nn
+    label_counts = Counter(s[2] for s in train_ds.samples)
+    total = len(train_ds.samples)
+    class_weights = torch.tensor(
+        [total / (NUM_CLASSES * max(label_counts[c], 1)) for c in range(NUM_CLASSES)],
+        dtype=torch.float32,
+    ).to(device)
+    print(f"Class weights: {class_weights.tolist()}")
+
     pin = device.type == "cuda"
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=pin)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=pin)
 
     model = NavahiClassifier().to(device)
+    model.cls_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     best_val_acc = 0.0

@@ -77,8 +77,8 @@ DUAL_FEATURE_DIM = FEATURE_DIM + VOCAL_FEATURE_DIM        # 2304 + 3072 = 5376
 
 # Training
 BATCH_SIZE = 32
-LEARNING_RATE = 2e-5
-NUM_EPOCHS = 10
+LEARNING_RATE = 1e-3
+NUM_EPOCHS = 50
 LAMBDA_REG = 1.0               # weight on regression loss
 VAL_RATIO = 0.1                # fraction of train used for validation
 SEED = 42

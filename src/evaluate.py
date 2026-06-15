@@ -118,13 +118,13 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
     all_cp = torch.cat(all_cp)
     all_ct = torch.cat(all_ct)
 
-    m = compute_metrics(all_preds, all_labels, all_cp, all_ct)
-    print_metrics(m, header=f"Test Results — {checkpoint_path}")
+    # Chunk-level metrics
+    m_chunk = compute_metrics(all_preds, all_labels, all_cp, all_ct)
+    print_metrics(m_chunk, header=f"Chunk-level — {os.path.basename(checkpoint_path)}")
 
-    # Per-class breakdown
     preds_np = all_preds.argmax(1).numpy()
     labels_np = all_labels.numpy()
-    print("\nPer-class accuracy:")
+    print("\nPer-class accuracy (chunk-level):")
     for c in range(NUM_CLASSES):
         mask = labels_np == c
         if mask.sum() == 0:
@@ -132,7 +132,38 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
         cls_acc = (preds_np[mask] == c).mean()
         print(f"  {CLASS_NAMES[c]:<35} {cls_acc*100:5.1f}%  (n={mask.sum()})")
 
-    return m
+    # File-level metrics: average logits across all chunks of the same file, then argmax
+    # ds.samples = [(feat_path, chunk_idx, label, coords), ...]  in DataLoader order (shuffle=False)
+    file_logits = {}   # feat_path -> list of logit tensors
+    file_cp     = {}   # feat_path -> list of predicted coord tensors
+    file_label  = {}
+    file_ct     = {}
+    for i, (feat_path, chunk_idx, label, coords) in enumerate(ds.samples):
+        file_logits.setdefault(feat_path, []).append(all_preds[i])
+        file_cp.setdefault(feat_path, []).append(all_cp[i])
+        file_label[feat_path] = label
+        file_ct[feat_path]    = all_ct[i]
+
+    file_paths = list(file_logits.keys())
+    agg_logits = torch.stack([torch.stack(file_logits[p]).mean(0) for p in file_paths])
+    agg_cp     = torch.stack([torch.stack(file_cp[p]).mean(0)     for p in file_paths])
+    agg_labels = torch.tensor([file_label[p] for p in file_paths])
+    agg_ct     = torch.stack([file_ct[p]     for p in file_paths])
+
+    m_file = compute_metrics(agg_logits, agg_labels, agg_cp, agg_ct)
+    print_metrics(m_file, header=f"File-level (majority-avg) — {os.path.basename(checkpoint_path)}")
+
+    file_preds_np = agg_logits.argmax(1).numpy()
+    file_labels_np = agg_labels.numpy()
+    print("\nPer-class accuracy (file-level):")
+    for c in range(NUM_CLASSES):
+        mask = file_labels_np == c
+        if mask.sum() == 0:
+            continue
+        cls_acc = (file_preds_np[mask] == c).mean()
+        print(f"  {CLASS_NAMES[c]:<35} {cls_acc*100:5.1f}%  (n={mask.sum()})")
+
+    return m_file
 
 
 def main():
