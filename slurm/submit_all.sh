@@ -42,8 +42,9 @@ CHECKPOINTS_DUAL_DIR=$SCRATCH/navahi-checkpoints-dual
 ENV_BLOCK="
 module load python/3.11
 module load cuda/12.2
-source $SCRATCH/navahi-venv/bin/activate
+source ~/navahi-venv/bin/activate
 export HF_HOME=$HF_CACHE
+export TORCH_HOME=$HF_CACHE/torch
 export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export NAVAHI_ROOT=$NAVAHI_ROOT
