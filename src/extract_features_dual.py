@@ -23,7 +23,6 @@ import sys
 import numpy as np
 import openpyxl
 import torch
-import torchaudio
 import librosa
 from tqdm import tqdm
 from transformers import AutoModel, Wav2Vec2FeatureExtractor, Wav2Vec2Model
@@ -65,7 +64,10 @@ def separate_stems(audio_path: str, device: torch.device):
     model = get_model("htdemucs")
     model.to(device).eval()
 
-    wav, sr = torchaudio.load(audio_path)
+    audio_np, sr = librosa.load(audio_path, sr=None, mono=False)
+    if audio_np.ndim == 1:
+        audio_np = audio_np[np.newaxis, :]   # mono → (1, samples)
+    wav = torch.from_numpy(audio_np.astype(np.float32))
     wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
     wav = wav.unsqueeze(0).to(device)
 
