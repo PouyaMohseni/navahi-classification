@@ -1,13 +1,19 @@
 """
-NavahiDualDataset: loads dual-stream (instruments + vocals) pre-extracted features.
+NavahiDualDataset — same windowing logic as NavahiDataset but for dual-stream
+(instruments via MERT + vocals via wav2vec2-xlsr-53) pre-extracted features.
 
-Features on disk: (N_segs, 5376) — one row per 5-second segment.
-  [instruments via MERT (2304) | vocals via wav2vec2-xlsr-53 (3072)]
+Features on disk: (N_segs, 3, 1792) per file
+  — layers 6,7,8 from both streams concatenated along last axis at extraction time
+  — instruments (3, 768) | vocals (3, 1024) → (3, 1792) per segment
 
-window_size controls how many consecutive 5-second segments are mean-pooled:
-  window_size=1   → each 5s segment is its own sample (training)
-  window_size=12  → sliding window = 60s evaluation (stride=1)
-  window_size=6   → sliding window = 30s evaluation (stride=1)
+Window construction:
+  1. Take stack_size consecutive segments → (stack_size, 3, 1792)
+  2. np.concatenate along last axis → (3, 1792*stack_size)
+  3. Flatten → 3*1792*stack_size  (e.g. 3*1792*12 = 64512)
+
+Stride:
+  overlap=False  (training)   stride = stack_size
+  overlap=True   (val/test)   stride = 1
 """
 
 import os
@@ -36,7 +42,7 @@ _GENRE_TO_LABEL = {
 }
 
 
-def _normalize_coords(lat, lon):
+def _normalize_coords(lat: float, lon: float) -> np.ndarray:
     return np.clip(
         np.array([(lat - LAT_MIN) / (LAT_MAX - LAT_MIN),
                   (lon - LON_MIN) / (LON_MAX - LON_MIN)], dtype=np.float32),
@@ -44,14 +50,13 @@ def _normalize_coords(lat, lon):
     )
 
 
-def _load_split_metadata(split):
-    path = os.path.join(SPLIT9_DIR, f"{split}.xlsx")
-    wb = openpyxl.load_workbook(path)
+def _load_split_metadata(split: str) -> list:
+    wb = openpyxl.load_workbook(os.path.join(SPLIT9_DIR, f"{split}.xlsx"))
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
     h = list(rows[0])
     fn_col, genre_col = h.index("File Name"), h.index("Genre")
-    lat_col, lon_col  = h.index("State_x"),   h.index("State_y")
+    lat_col, lon_col   = h.index("State_x"),   h.index("State_y")
 
     records = []
     for r in rows[1:]:
@@ -62,46 +67,51 @@ def _load_split_metadata(split):
         lat, lon = r[lat_col], r[lon_col]
         coords = _normalize_coords(float(lat), float(lon)) if (lat and lon) \
                  else _normalize_coords(*CLASS_COORDS[label])
-        stem = os.path.splitext(fname)[0]
-        records.append((stem, label, coords))
+        records.append((os.path.splitext(fname)[0], label, coords))
     return records
 
 
 class NavahiDualDataset(Dataset):
-    """
-    window_size=1  → one sample per 5-second segment (training)
-    window_size=W  → sliding window of W 5-second segments, mean-pooled (eval)
-    """
-
-    def __init__(self, split: str = "train", window_size: int = 1):
+    def __init__(
+        self,
+        split:      str  = "train",
+        stack_size: int  = 12,
+        overlap:    bool = False,
+    ):
         assert split in ("train", "val", "test")
-        self.window_size = window_size
-        self.samples = []   # (feat_path, start_seg_idx, label, coords)
+        self.stack_size = stack_size
+        stride = 1 if overlap else stack_size
 
-        feat_dir = os.path.join(FEATURES_DUAL_DIR, split)
-        metadata = _load_split_metadata(split)
+        self.samples = []  # (feat_path, start, label, coords)
+        feat_dir  = os.path.join(FEATURES_DUAL_DIR, split)
+        metadata  = _load_split_metadata(split)
+        missing   = 0
 
-        missing = 0
         for stem, label, coords in metadata:
             feat_path = os.path.join(feat_dir, stem + ".npy")
             if not os.path.exists(feat_path):
                 missing += 1
                 continue
             n_segs = np.load(feat_path, mmap_mode="r").shape[0]
-            n_windows = max(1, n_segs - window_size + 1)
-            for start in range(n_windows):
+            start = 0
+            while start + stack_size <= n_segs:
                 self.samples.append((feat_path, start, label, coords))
+                start += stride
 
         if missing:
-            print(f"[NavahiDualDataset/{split}] {missing}/{len(metadata)} files "
-                  "missing — run extract_features_dual.py first")
+            print(f"[NavahiDualDataset/{split}] {missing}/{len(metadata)} files missing "
+                  "— run extract_features_dual.py first")
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
         feat_path, start, label, coords = self.samples[idx]
-        feats = np.load(feat_path)
-        window = feats[start:start + self.window_size]
-        x = torch.from_numpy(window.mean(axis=0).astype(np.float32))
+        feats  = np.load(feat_path)                      # (N_segs, 3, 1792)
+        window = feats[start : start + self.stack_size]  # (stack_size, 3, 1792)
+
+        # (stack_size, 3, 1792) → concat along last axis → (3, 1792*stack_size)
+        stacked = np.concatenate(window, axis=-1)
+
+        x = torch.from_numpy(stacked.reshape(-1).astype(np.float32))
         return x, label, torch.from_numpy(coords)

@@ -22,7 +22,7 @@ export NAVAHI_CHECKPOINTS_DIR=$CHECKPOINTS_DIR
 module load python/3.11
 module load cuda/12.2
 
-source $SCRATCH/navahi-venv/bin/activate
+source ~/navahi-venv/bin/activate
 
 cd $CODE_DIR
 python src/evaluate.py \

@@ -18,7 +18,7 @@ export NAVAHI_CHECKPOINTS_DUAL_DIR=$SCRATCH/navahi-checkpoints-dual
 
 module load python/3.11
 module load cuda/12.2
-source $SCRATCH/navahi-venv/bin/activate
+source ~/navahi-venv/bin/activate
 
 cd $SCRATCH/navahi-classification
 python src/train_dual.py --epochs 10 --batch_size 32 --lr 2e-5

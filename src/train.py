@@ -1,8 +1,12 @@
 """
 Train the multi-task NavahiClassifier on pre-extracted MERT features.
 
+Training: non-overlapping windows (stride=stack_size) — each window is
+          a unique, non-repeating sequence of 5-second segments.
+Val:      sliding window (stride=1) — every possible consecutive sequence.
+
 Usage:
-    python src/train.py [--epochs 10] [--batch_size 32] [--lr 2e-5] [--output checkpoints/]
+    python src/train.py [--stack_size 12] [--epochs 10] [--lr 2e-5]
 """
 
 import argparse
@@ -14,7 +18,10 @@ import torch
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED, CHECKPOINTS_DIR, NUM_CLASSES
+from config import (
+    BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED,
+    CHECKPOINTS_DIR, FEATURE_DIM, LAMBDA_REG, EVAL_WINDOW_SIZE,
+)
 from dataset import NavahiDataset
 from model import NavahiClassifier
 from evaluate import compute_metrics
@@ -33,27 +40,25 @@ def train_epoch(model, loader, optimizer, device):
     correct = n = 0
 
     for x, labels, coords in loader:
-        x = x.to(device)
-        labels = labels.to(device)
-        coords = coords.to(device)
-
+        x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         optimizer.zero_grad()
         logits, coords_pred = model(x)
         loss, l_cls, l_reg = model.compute_loss(logits, coords_pred, labels, coords)
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.item() * len(x)
-        cls_loss_sum += l_cls * len(x)
-        reg_loss_sum += l_reg * len(x)
-        correct += (logits.argmax(1) == labels).sum().item()
-        n += len(x)
+        bs = len(x)
+        total_loss   += loss.item() * bs
+        cls_loss_sum += l_cls * bs
+        reg_loss_sum += l_reg * bs
+        correct      += (logits.argmax(1) == labels).sum().item()
+        n            += bs
 
     return {
-        "loss": total_loss / n,
+        "loss":     total_loss / n,
         "cls_loss": cls_loss_sum / n,
         "reg_loss": reg_loss_sum / n,
-        "acc": correct / n,
+        "acc":      correct / n,
     }
 
 
@@ -61,39 +66,37 @@ def train_epoch(model, loader, optimizer, device):
 def eval_epoch(model, loader, device):
     model.eval()
     total_loss = 0
-    all_preds, all_labels, all_coords_pred, all_coords_true = [], [], [], []
+    all_preds, all_labels, all_cp, all_ct = [], [], [], []
 
     for x, labels, coords in loader:
-        x = x.to(device)
-        labels = labels.to(device)
-        coords = coords.to(device)
-
+        x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         logits, coords_pred = model(x)
         loss, _, _ = model.compute_loss(logits, coords_pred, labels, coords)
         total_loss += loss.item() * len(x)
-
         all_preds.append(logits.cpu())
         all_labels.append(labels.cpu())
-        all_coords_pred.append(coords_pred.cpu())
-        all_coords_true.append(coords.cpu())
+        all_cp.append(coords_pred.cpu())
+        all_ct.append(coords.cpu())
 
-    all_preds = torch.cat(all_preds)
+    all_preds  = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
-    all_coords_pred = torch.cat(all_coords_pred)
-    all_coords_true = torch.cat(all_coords_true)
+    all_cp     = torch.cat(all_cp)
+    all_ct     = torch.cat(all_ct)
 
-    metrics = compute_metrics(all_preds, all_labels, all_coords_pred, all_coords_true)
+    metrics = compute_metrics(all_preds, all_labels, all_cp, all_ct)
     metrics["loss"] = total_loss / len(all_labels)
     return metrics
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=NUM_EPOCHS)
-    parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
-    parser.add_argument("--lr", type=float, default=LEARNING_RATE)
-    parser.add_argument("--output", default=CHECKPOINTS_DIR)
-    parser.add_argument("--device", default="auto")
+    parser.add_argument("--stack_size",  type=int,   default=EVAL_WINDOW_SIZE)
+    parser.add_argument("--epochs",      type=int,   default=NUM_EPOCHS)
+    parser.add_argument("--batch_size",  type=int,   default=BATCH_SIZE)
+    parser.add_argument("--lr",          type=float, default=LEARNING_RATE)
+    parser.add_argument("--lambda_reg",  type=float, default=LAMBDA_REG)
+    parser.add_argument("--output",      default=CHECKPOINTS_DIR)
+    parser.add_argument("--device",      default="auto")
     args = parser.parse_args()
 
     set_seed(SEED)
@@ -101,40 +104,32 @@ def main():
 
     device = torch.device(
         "cuda" if torch.cuda.is_available() else
-        "mps" if torch.backends.mps.is_available() else
+        "mps"  if torch.backends.mps.is_available() else
         "cpu"
     ) if args.device == "auto" else torch.device(args.device)
     print(f"Device: {device}")
 
-    train_ds = NavahiDataset("train")
-    val_ds = NavahiDataset("val")
-    print(f"Train samples: {len(train_ds)}, Val samples: {len(val_ds)}")
-
-    # Class-balanced loss weights: inverse frequency per class
-    from collections import Counter
-    import torch.nn as nn
-    label_counts = Counter(s[2] for s in train_ds.samples)
-    total = len(train_ds.samples)
-    class_weights = torch.tensor(
-        [total / (NUM_CLASSES * max(label_counts[c], 1)) for c in range(NUM_CLASSES)],
-        dtype=torch.float32,
-    ).to(device)
-    print(f"Class weights: {class_weights.tolist()}")
+    train_ds = NavahiDataset("train", stack_size=args.stack_size, overlap=False)
+    val_ds   = NavahiDataset("val",   stack_size=args.stack_size, overlap=True)
+    print(f"Train: {len(train_ds)} windows,  Val: {len(val_ds)} windows  "
+          f"(stack_size={args.stack_size})")
 
     pin = device.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=pin)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=pin)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                              shuffle=True,  num_workers=4, pin_memory=pin)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
+                              shuffle=False, num_workers=4, pin_memory=pin)
 
-    model = NavahiClassifier().to(device)
-    model.cls_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    input_dim = len(train_ds.time_indices) * 768 * args.stack_size
+    model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
 
     best_val_acc = 0.0
-    best_ckpt = os.path.join(args.output, "best_model.pt")
+    best_ckpt    = os.path.join(args.output, "best_model.pt")
 
     for epoch in range(1, args.epochs + 1):
         train_m = train_epoch(model, train_loader, optimizer, device)
-        val_m = eval_epoch(model, val_loader, device)
+        val_m   = eval_epoch(model, val_loader,   device)
 
         print(
             f"Epoch {epoch:02d}/{args.epochs}  "
@@ -146,10 +141,12 @@ def main():
         if val_m["acc"] > best_val_acc:
             best_val_acc = val_m["acc"]
             torch.save({
-                "epoch": epoch,
-                "model_state": model.state_dict(),
+                "epoch":          epoch,
+                "model_state":    model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
-                "val_metrics": val_m,
+                "val_metrics":    val_m,
+                "stack_size":     args.stack_size,
+                "input_dim":      input_dim,
             }, best_ckpt)
             print(f"  --> saved best model (val_acc={best_val_acc:.4f})")
 

@@ -1,16 +1,16 @@
 """
-Multi-task model from the Navahi paper:
+Multi-task classifier from the Navahi paper (mlptest/mlptest-reg2.py SimpleMLP).
 
-  Input: MERT embeddings (2304-dim)
-  Shared backbone: 4 FC layers with ReLU, reducing to 32 dims
-                   Dropout(0.2) after layer 3, Dropout(0.4) after layer 4
-  Classification head: FC(32 → num_classes)
-  Regression head:     FC(32 → 2)  [normalized lat, lon]
+Architecture:
+  input_dim (27648)
+  → Linear → BatchNorm1d → ReLU                         (1024)
+  → Linear → BatchNorm1d → ReLU → Dropout(0.2)          (256)
+  → Linear → BatchNorm1d → ReLU → Dropout(0.4)          (128)
+  → Linear → ReLU                                        (32)
+  ┌─ cls_head: Linear(32 → num_classes)
+  └─ reg_head: Linear(32 → 2)
 
-Loss: L_total = L_cls + lambda_reg * L_reg
-  L_cls = CrossEntropyLoss
-  L_reg = MSELoss
-  lambda_reg = 1.0  (paper ratio 2.5:1 cls:reg, λ=1)
+Loss: L_total = cls_weight * CrossEntropy + lambda_reg * MSE
 """
 
 import torch
@@ -25,25 +25,29 @@ from config import FEATURE_DIM, NUM_CLASSES, LAMBDA_REG
 class NavahiClassifier(nn.Module):
     def __init__(
         self,
-        input_dim: int = FEATURE_DIM,
-        num_classes: int = NUM_CLASSES,
-        lambda_reg: float = LAMBDA_REG,
+        input_dim:   int   = FEATURE_DIM,
+        num_classes: int   = NUM_CLASSES,
+        lambda_reg:  float = LAMBDA_REG,
+        cls_weight:  float = 1.0,
     ):
         super().__init__()
         self.lambda_reg = lambda_reg
+        self.cls_weight = cls_weight
 
-        # Shared backbone: 4 FC layers progressively reducing to 32
-        self.backbone = nn.Sequential(
-            nn.Linear(input_dim, 512),
+        self.shared = nn.Sequential(
+            nn.Linear(input_dim, 1024),
+            nn.BatchNorm1d(1024),
             nn.ReLU(),
-            nn.Linear(512, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(1024, 256),
+            nn.BatchNorm1d(256),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(64, 32),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(),
             nn.Dropout(0.4),
+            nn.Linear(128, 32),
+            nn.ReLU(),
         )
 
         self.cls_head = nn.Linear(32, num_classes)
@@ -53,13 +57,11 @@ class NavahiClassifier(nn.Module):
         self.reg_loss_fn = nn.MSELoss()
 
     def forward(self, x):
-        h = self.backbone(x)
-        logits = self.cls_head(h)
-        coords = self.reg_head(h)
-        return logits, coords
+        h = self.shared(x)
+        return self.cls_head(h), self.reg_head(h)
 
     def compute_loss(self, logits, coords_pred, labels, coords_true):
         l_cls = self.cls_loss_fn(logits, labels)
         l_reg = self.reg_loss_fn(coords_pred, coords_true)
-        total = l_cls + self.lambda_reg * l_reg
+        total = self.cls_weight * l_cls + self.lambda_reg * l_reg
         return total, l_cls.item(), l_reg.item()

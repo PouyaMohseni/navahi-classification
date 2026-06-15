@@ -26,13 +26,7 @@ export NAVAHI_CHECKPOINTS_DIR=$CHECKPOINTS_DIR
 module load python/3.11
 module load cuda/12.2
 
-# Create virtualenv on first run
-VENV=$SCRATCH/navahi-venv
-if [ ! -d "$VENV" ]; then
-    python -m venv $VENV
-fi
-source $VENV/bin/activate
-pip install -q -r $CODE_DIR/requirements.txt
+source ~/navahi-venv/bin/activate
 
 cd $CODE_DIR
 python src/extract_features.py --split all --device auto

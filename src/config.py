@@ -1,28 +1,30 @@
 import os
 
-# Paths — override with env vars for cluster runs
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_default_navahi = os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi")
-_default_features = os.path.join(PROJECT_ROOT, "features")
-_default_checkpoints = os.path.join(PROJECT_ROOT, "checkpoints")
 
-NAVAHI_ROOT = os.environ.get("NAVAHI_ROOT", _default_navahi)
-AUDIO_ROOT = os.path.join(NAVAHI_ROOT, "Navahi-Dataset")   # fallback: folder-based
-DATA_ROOT = os.path.join(NAVAHI_ROOT, "Data")               # Mahoor/Spotify/Cassette/AppleMusic
-SPLIT9_DIR = os.path.join(NAVAHI_ROOT, "Split9")            # official split xlsx files
-FEATURES_DIR = os.environ.get("NAVAHI_FEATURES_DIR", _default_features)
-CHECKPOINTS_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DIR", _default_checkpoints)
+# ── Paths (override with env vars on cluster) ──────────────────────────────────
+NAVAHI_ROOT       = os.environ.get("NAVAHI_ROOT",
+                                    os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi"))
+SPLIT9_DIR        = os.path.join(NAVAHI_ROOT, "Split9")
+FEATURES_DIR      = os.environ.get("NAVAHI_FEATURES_DIR",
+                                    os.path.join(PROJECT_ROOT, "features"))
+FEATURES_DUAL_DIR = os.environ.get("NAVAHI_FEATURES_DUAL_DIR",
+                                    os.path.join(PROJECT_ROOT, "features_dual"))
+CHECKPOINTS_DIR   = os.environ.get("NAVAHI_CHECKPOINTS_DIR",
+                                    os.path.join(PROJECT_ROOT, "checkpoints"))
+CHECKPOINTS_DUAL_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DUAL_DIR",
+                                       os.path.join(PROJECT_ROOT, "checkpoints_dual"))
 
-# Classes — folder name → integer label
+# ── Classes ────────────────────────────────────────────────────────────────────
 CLASS_MAP = {
-    "Gilan&Mazandaran": 0,
-    "Lorestan": 1,
-    "Khorasan": 2,
+    "Gilan&Mazandaran":     0,
+    "Lorestan":             1,
+    "Khorasan":             2,
     "Kordestan&Kermanshah": 3,
-    "Azerbaijan": 4,
-    "Sistan&Baluchestan": 5,
-    "Turkaman": 6,
-    "Bushehr": 7,
+    "Azerbaijan":           4,
+    "Sistan&Baluchestan":   5,
+    "Turkaman":             6,
+    "Bushehr":              7,
 }
 CLASS_NAMES = [
     "Gilan, Talesh & Mazandaran",
@@ -36,49 +38,50 @@ CLASS_NAMES = [
 ]
 NUM_CLASSES = 8
 
-# Class-level mean geo-coordinates (lat, lon) derived from all.xlsx
-# Used as regression targets when per-file coordinates are unavailable
 CLASS_COORDS = {
-    0: (37.10, 50.48),   # Gilan & Mazandaran
-    1: (32.04, 50.56),   # Lorestan
-    2: (36.36, 58.21),   # Khorasan
-    3: (35.11, 47.01),   # Kordestan & Kermanshah
-    4: (37.83, 46.12),   # Azerbaijan
-    5: (27.53, 60.52),   # Sistan & Baluchestan
-    6: (37.23, 55.13),   # Turkaman
-    7: (28.65, 51.75),   # Bushehr
+    0: (37.10, 50.48),
+    1: (32.04, 50.56),
+    2: (36.36, 58.21),
+    3: (35.11, 47.01),
+    4: (37.83, 46.12),
+    5: (27.53, 60.52),
+    6: (37.23, 55.13),
+    7: (28.65, 51.75),
 }
 
-# Iran bounding box for coordinate normalization
 LAT_MIN, LAT_MAX = 25.064, 39.780
 LON_MIN, LON_MAX = 44.039, 63.333
 
-# MERT config
-MERT_MODEL = "m-a-p/MERT-v1-95M"
-MERT_LAYERS = [6, 7, 8]       # middle transformer layers
-MERT_SAMPLE_RATE = 24000
-SEGMENT_SEC = 5                # sub-segment length
-CHUNK_SEC = 60                 # full chunk fed as context
-EMBED_DIM = 768                # hidden size per layer
-FEATURE_DIM = len(MERT_LAYERS) * EMBED_DIM  # 2304
+# ── MERT ───────────────────────────────────────────────────────────────────────
+MERT_MODEL        = "m-a-p/MERT-v1-95M"
+MERT_SAMPLE_RATE  = 24000
+SEGMENT_SEC       = 5          # each audio segment fed to MERT
+NUM_HIDDEN_STATES = 13         # 1 embedding layer + 12 transformer layers
+EMBED_DIM         = 768
+MERT_LAYERS       = [6, 7, 8]  # selected at dataset time (not extraction time)
 
-# Dual-stream config (vocals + instruments)
-FEATURES_DUAL_DIR = os.environ.get("NAVAHI_FEATURES_DUAL_DIR",
-                                   os.path.join(PROJECT_ROOT, "features_dual"))
-CHECKPOINTS_DUAL_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DUAL_DIR",
-                                      os.path.join(PROJECT_ROOT, "checkpoints_dual"))
+# Extracted .npy shape per file: (N_segs, NUM_HIDDEN_STATES, EMBED_DIM) = (N_segs, 13, 768)
 
-VOCAL_MODEL = "facebook/wav2vec2-large-xlsr-53"
-VOCAL_LAYERS = [6, 7, 8]       # middle transformer layers (hidden size 1024)
-VOCAL_EMBED_DIM = 1024
-VOCAL_FEATURE_DIM = len(VOCAL_LAYERS) * VOCAL_EMBED_DIM   # 3072
+# ── Window (segment stacking) ─────────────────────────────────────────────────
+EVAL_WINDOW_SIZE = 12    # 12 × 5s = 60s default eval context
 
-DUAL_FEATURE_DIM = FEATURE_DIM + VOCAL_FEATURE_DIM        # 2304 + 3072 = 5376
+# Input to MLP = len(MERT_LAYERS) × EMBED_DIM × EVAL_WINDOW_SIZE
+FEATURE_DIM = len(MERT_LAYERS) * EMBED_DIM * EVAL_WINDOW_SIZE  # 3*768*12 = 27648
 
-# Training
-BATCH_SIZE = 32
-LEARNING_RATE = 1e-3
-NUM_EPOCHS = 50
-LAMBDA_REG = 1.0               # weight on regression loss
-VAL_RATIO = 0.1                # fraction of train used for validation
-SEED = 42
+# ── Dual-stream (vocal via wav2vec2-xlsr-53) ───────────────────────────────────
+VOCAL_MODEL             = "facebook/wav2vec2-large-xlsr-53"
+VOCAL_LAYERS            = [6, 7, 8]
+VOCAL_EMBED_DIM         = 1024
+VOCAL_NUM_HIDDEN_STATES = 25   # 1 CNN + 24 transformer
+
+# Dual extracted .npy: (N_segs, 3, EMBED_DIM+VOCAL_EMBED_DIM) = (N_segs, 3, 1792)
+# → layers 6,7,8 for both streams concatenated along last axis at extraction time
+DUAL_FEATURE_DIM = len(MERT_LAYERS) * (EMBED_DIM + VOCAL_EMBED_DIM) * EVAL_WINDOW_SIZE
+# 3 * 1792 * 12 = 64512
+
+# ── Training ───────────────────────────────────────────────────────────────────
+BATCH_SIZE    = 32
+LEARNING_RATE = 2e-5
+NUM_EPOCHS    = 10
+LAMBDA_REG    = 1.0
+SEED          = 42
