@@ -95,6 +95,7 @@ def main():
     parser.add_argument("--batch_size",  type=int,   default=BATCH_SIZE)
     parser.add_argument("--lr",          type=float, default=LEARNING_RATE)
     parser.add_argument("--lambda_reg",  type=float, default=LAMBDA_REG)
+    parser.add_argument("--cls_weight",  type=float, default=2.5)
     parser.add_argument("--output",      default=CHECKPOINTS_DIR)
     parser.add_argument("--device",      default="auto")
     args = parser.parse_args()
@@ -121,7 +122,8 @@ def main():
                               shuffle=False, num_workers=4, pin_memory=pin)
 
     input_dim = len(train_ds.time_indices) * 768 * args.stack_size
-    model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg).to(device)
+    model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg,
+                             cls_weight=args.cls_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
 
     best_val_acc = 0.0
