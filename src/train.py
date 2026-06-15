@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED
+from config import BATCH_SIZE, LEARNING_RATE, NUM_EPOCHS, SEED, CHECKPOINTS_DIR
 from dataset import NavahiDataset
 from model import NavahiClassifier
 from evaluate import compute_metrics
@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=LEARNING_RATE)
-    parser.add_argument("--output", default=os.path.join(PROJECT_ROOT, "checkpoints"))
+    parser.add_argument("--output", default=CHECKPOINTS_DIR)
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 

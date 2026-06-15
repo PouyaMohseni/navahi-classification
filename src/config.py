@@ -1,10 +1,14 @@
 import os
 
-# Paths
+# Paths — override with env vars for cluster runs
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_ROOT = os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi")
-AUDIO_ROOT = os.path.join(DATA_ROOT, "Navahi-Dataset")
-FEATURES_DIR = os.path.join(PROJECT_ROOT, "features")
+_default_audio = os.path.join(PROJECT_ROOT, "Navahi_data", "Navahi", "Navahi-Dataset")
+_default_features = os.path.join(PROJECT_ROOT, "features")
+_default_checkpoints = os.path.join(PROJECT_ROOT, "checkpoints")
+
+AUDIO_ROOT = os.environ.get("NAVAHI_AUDIO_ROOT", _default_audio)
+FEATURES_DIR = os.environ.get("NAVAHI_FEATURES_DIR", _default_features)
+CHECKPOINTS_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DIR", _default_checkpoints)
 
 # Classes — folder name → integer label
 CLASS_MAP = {
