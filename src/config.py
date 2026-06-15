@@ -62,6 +62,19 @@ CHUNK_SEC = 60                 # full chunk fed as context
 EMBED_DIM = 768                # hidden size per layer
 FEATURE_DIM = len(MERT_LAYERS) * EMBED_DIM  # 2304
 
+# Dual-stream config (vocals + instruments)
+FEATURES_DUAL_DIR = os.environ.get("NAVAHI_FEATURES_DUAL_DIR",
+                                   os.path.join(PROJECT_ROOT, "features_dual"))
+CHECKPOINTS_DUAL_DIR = os.environ.get("NAVAHI_CHECKPOINTS_DUAL_DIR",
+                                      os.path.join(PROJECT_ROOT, "checkpoints_dual"))
+
+VOCAL_MODEL = "facebook/wav2vec2-large-xlsr-53"
+VOCAL_LAYERS = [6, 7, 8]       # middle transformer layers (hidden size 1024)
+VOCAL_EMBED_DIM = 1024
+VOCAL_FEATURE_DIM = len(VOCAL_LAYERS) * VOCAL_EMBED_DIM   # 3072
+
+DUAL_FEATURE_DIM = FEATURE_DIM + VOCAL_FEATURE_DIM        # 2304 + 3072 = 5376
+
 # Training
 BATCH_SIZE = 32
 LEARNING_RATE = 2e-5
