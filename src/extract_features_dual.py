@@ -1,16 +1,16 @@
 """
 Dual-stream feature extraction: separate audio into vocals and instruments
-using Demucs (htdemucs), then encode each stem independently.
+using Demucs (htdemucs), then encode each stem with its own model.
 
-  instruments = drums + bass + other  → MERT layers 6,7,8 → (3, 768) per seg
-  vocals                              → wav2vec2-xlsr-53 layers 6,7,8 → (3, 1024) per seg
+  instruments = drums + bass + other  → MERT        → (N_segs, 13, 768)
+  vocals                              → wav2vec2-xlsr-53 → (N_segs, 25, 1024)
 
-Per segment, concatenate along last axis:
-  (3, 768) + (3, 1024) → (3, 1792)
+Saved as two files per song:
+  features_dual/<split>/<stem>_instru.npy   shape (N_segs, 13, 768)
+  features_dual/<split>/<stem>_vocal.npy    shape (N_segs, 25, 1024)
 
-Saved as features_dual/<split>/<stem>.npy  shape (N_segs, 3, 1792)
-
-Layer stacking/windowing happens at dataset time (same as single-stream).
+Layer selection and window stacking happen at dataset time (same philosophy
+as the single-stream pipeline).
 
 Usage:
     python src/extract_features_dual.py [--split train|val|test|all]
@@ -30,11 +30,12 @@ from transformers import AutoModel, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (
     NAVAHI_ROOT, SPLIT9_DIR, FEATURES_DUAL_DIR,
-    MERT_MODEL, MERT_SAMPLE_RATE, MERT_LAYERS,
-    VOCAL_MODEL, VOCAL_LAYERS,
+    MERT_MODEL, MERT_SAMPLE_RATE,
+    VOCAL_MODEL,
     SEGMENT_SEC,
 )
 
+VOCAL_SAMPLE_RATE = 16000
 TARGET_DB = -20.0
 EPS = 1e-9
 
@@ -44,8 +45,8 @@ def rms_normalize(audio: np.ndarray) -> np.ndarray:
     return audio * (10 ** (TARGET_DB / 20)) / (rms + EPS)
 
 
-def segment_audio(audio: np.ndarray) -> list:
-    seg_len = SEGMENT_SEC * MERT_SAMPLE_RATE
+def segment_audio(audio: np.ndarray, sr: int) -> list:
+    seg_len = SEGMENT_SEC * sr
     segs = []
     for start in range(0, len(audio), seg_len):
         s = audio[start:start + seg_len]
@@ -56,7 +57,7 @@ def segment_audio(audio: np.ndarray) -> list:
 
 
 def separate_stems(audio_path: str, device: torch.device):
-    """Returns (vocals_np, instruments_np) at MERT_SAMPLE_RATE."""
+    """Returns (vocals_np at 16kHz, instruments_np at 24kHz)."""
     from demucs.pretrained import get_model
     from demucs.apply import apply_model
     from demucs.audio import convert_audio
@@ -66,47 +67,45 @@ def separate_stems(audio_path: str, device: torch.device):
 
     audio_np, sr = librosa.load(audio_path, sr=None, mono=False)
     if audio_np.ndim == 1:
-        audio_np = audio_np[np.newaxis, :]   # mono → (1, samples)
+        audio_np = audio_np[np.newaxis, :]
     wav = torch.from_numpy(audio_np.astype(np.float32))
     wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
     wav = wav.unsqueeze(0).to(device)
 
     with torch.no_grad():
-        sources = apply_model(model, wav, device=device)[0]  # (4, ch, samples)
+        sources = apply_model(model, wav, device=device)[0]
 
-    stem_names = model.sources   # ['drums', 'bass', 'other', 'vocals']
+    stem_names = model.sources
     stems = {name: sources[i] for i, name in enumerate(stem_names)}
 
     vocals = stems["vocals"].mean(0).cpu().numpy()
     instru = (stems["drums"] + stems["bass"] + stems["other"]).mean(0).cpu().numpy()
 
     native_sr = model.samplerate
-    vocals = rms_normalize(librosa.resample(vocals, orig_sr=native_sr, target_sr=MERT_SAMPLE_RATE))
+    vocals = rms_normalize(librosa.resample(vocals, orig_sr=native_sr, target_sr=VOCAL_SAMPLE_RATE))
     instru = rms_normalize(librosa.resample(instru, orig_sr=native_sr, target_sr=MERT_SAMPLE_RATE))
     return vocals, instru
 
 
 @torch.no_grad()
-def embed_mert_seg(seg: np.ndarray, model, processor, device, layers: list) -> np.ndarray:
-    """(3, 768) — selected MERT hidden states, mean-pooled over time."""
-    inputs = processor(seg, sampling_rate=MERT_SAMPLE_RATE,
+def embed_mert(audio: np.ndarray, model, processor, device) -> np.ndarray:
+    """Returns (13, 768) — all hidden states, mean-pooled over time."""
+    inputs = processor(audio, sampling_rate=MERT_SAMPLE_RATE,
                        return_tensors="pt", padding=True)
     inputs = {k: v.to(device) for k, v in inputs.items()}
     out = model(**inputs, output_hidden_states=True)
-    vecs = [out.hidden_states[l].mean(1).squeeze(0).cpu().numpy() for l in layers]
-    return np.stack(vecs)   # (3, 768)
+    # (13, 1, T, 768) → mean over T → (13, 768)
+    return torch.stack(out.hidden_states).squeeze(1).mean(-2).cpu().numpy()
 
 
 @torch.no_grad()
-def embed_wav2vec_seg(seg: np.ndarray, model, processor, device, layers: list) -> np.ndarray:
-    """(3, 1024) — selected wav2vec2 hidden states, mean-pooled over time."""
-    seg_16k = librosa.resample(seg, orig_sr=MERT_SAMPLE_RATE, target_sr=16000)
-    inputs = processor(seg_16k, sampling_rate=16000,
+def embed_wav2vec2(audio: np.ndarray, model, processor, device) -> np.ndarray:
+    """Returns (25, 1024) — all hidden states, mean-pooled over time."""
+    inputs = processor(audio, sampling_rate=VOCAL_SAMPLE_RATE,
                        return_tensors="pt", padding=True)
     inputs = {k: v.to(device) for k, v in inputs.items()}
     out = model(**inputs, output_hidden_states=True)
-    vecs = [out.hidden_states[l].mean(1).squeeze(0).cpu().numpy() for l in layers]
-    return np.stack(vecs)   # (3, 1024)
+    return torch.stack(out.hidden_states).squeeze(1).mean(-2).cpu().numpy()
 
 
 def extract_dual_features(
@@ -114,22 +113,24 @@ def extract_dual_features(
     mert_model, mert_proc,
     wav2vec_model, wav2vec_proc,
     device: torch.device,
-) -> np.ndarray:
-    """Returns (N_segs, 3, 1792) — instru (3,768) concat vocal (3,1024) per seg."""
+):
+    """Returns (instru_feats, vocal_feats):
+       instru_feats: (N_segs, 13, 768)
+       vocal_feats:  (N_segs, 25, 1024)
+    """
     vocals_full, instru_full = separate_stems(audio_path, device)
 
-    vocal_segs = segment_audio(vocals_full)
-    instru_segs = segment_audio(instru_full)
+    vocal_segs = segment_audio(vocals_full, VOCAL_SAMPLE_RATE)
+    instru_segs = segment_audio(instru_full, MERT_SAMPLE_RATE)
     n_segs = min(len(vocal_segs), len(instru_segs))
 
-    out = []
+    instru_list, vocal_list = [], []
     for i in range(n_segs):
-        instru_vec = embed_mert_seg(instru_segs[i], mert_model, mert_proc, device, MERT_LAYERS)
-        vocal_vec  = embed_wav2vec_seg(vocal_segs[i], wav2vec_model, wav2vec_proc, device, VOCAL_LAYERS)
-        # (3, 768) + (3, 1024) → (3, 1792)
-        out.append(np.concatenate([instru_vec, vocal_vec], axis=-1))
+        instru_list.append(embed_mert(instru_segs[i], mert_model, mert_proc, device))
+        vocal_list.append(embed_wav2vec2(vocal_segs[i], wav2vec_model, wav2vec_proc, device))
 
-    return np.stack(out).astype(np.float32)  # (N_segs, 3, 1792)
+    return (np.stack(instru_list).astype(np.float32),   # (N_segs, 13, 768)
+            np.stack(vocal_list).astype(np.float32))    # (N_segs, 25, 1024)
 
 
 def build_file_index(navahi_root: str) -> dict:
@@ -172,17 +173,19 @@ def process_split(split, file_index, mert_model, mert_proc,
 
     for fname in tqdm(filenames, desc=split):
         stem = os.path.splitext(fname)[0]
-        out_path = os.path.join(out_dir, stem + ".npy")
-        if os.path.exists(out_path):
+        instru_path = os.path.join(out_dir, stem + "_instru.npy")
+        vocal_path  = os.path.join(out_dir, stem + "_vocal.npy")
+        if os.path.exists(instru_path) and os.path.exists(vocal_path):
             continue
         audio_path = file_index.get(fname)
         if audio_path is None:
             errors.append((fname, "not in index"))
             continue
         try:
-            feats = extract_dual_features(audio_path, mert_model, mert_proc,
-                                          wav2vec_model, wav2vec_proc, device)
-            np.save(out_path, feats)
+            instru_feats, vocal_feats = extract_dual_features(
+                audio_path, mert_model, mert_proc, wav2vec_model, wav2vec_proc, device)
+            np.save(instru_path, instru_feats)
+            np.save(vocal_path,  vocal_feats)
         except Exception as e:
             errors.append((fname, str(e)))
             print(f"\n  ERROR {fname}: {e}")
@@ -225,7 +228,9 @@ def main():
                       wav2vec_model, wav2vec_proc, device)
 
     print("\nDual-stream extraction complete.")
-    print(f"Saved to: {FEATURES_DUAL_DIR}  (shape per file: N_segs × 3 × 1792)")
+    print(f"Saved to: {FEATURES_DUAL_DIR}")
+    print("  <stem>_instru.npy: (N_segs, 13, 768)")
+    print("  <stem>_vocal.npy:  (N_segs, 25, 1024)")
 
 
 if __name__ == "__main__":

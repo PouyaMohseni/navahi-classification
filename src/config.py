@@ -74,10 +74,12 @@ VOCAL_LAYERS            = [6, 7, 8]
 VOCAL_EMBED_DIM         = 1024
 VOCAL_NUM_HIDDEN_STATES = 25   # 1 CNN + 24 transformer
 
-# Dual extracted .npy: (N_segs, 3, EMBED_DIM+VOCAL_EMBED_DIM) = (N_segs, 3, 1792)
-# → layers 6,7,8 for both streams concatenated along last axis at extraction time
-DUAL_FEATURE_DIM = len(MERT_LAYERS) * (EMBED_DIM + VOCAL_EMBED_DIM) * EVAL_WINDOW_SIZE
-# 3 * 1792 * 12 = 64512
+# Dual: two separate files per song
+#   <stem>_instru.npy: (N_segs, 13, 768)
+#   <stem>_vocal.npy:  (N_segs, 25, 1024)
+# Layer selection at dataset time (same as single stream)
+DUAL_FEATURE_DIM = (len(MERT_LAYERS) * EMBED_DIM + len(VOCAL_LAYERS) * VOCAL_EMBED_DIM) * EVAL_WINDOW_SIZE
+# (3*768 + 3*1024) * 12 = 64512
 
 # ── Training ───────────────────────────────────────────────────────────────────
 BATCH_SIZE    = 32

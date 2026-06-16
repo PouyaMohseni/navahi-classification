@@ -1,15 +1,18 @@
 """
-NavahiDualDataset — same windowing logic as NavahiDataset but for dual-stream
-(instruments via MERT + vocals via wav2vec2-xlsr-53) pre-extracted features.
+NavahiDualDataset — loads separate instrument and vocal feature files and
+builds windows by concatenating consecutive segments (same as single stream).
 
-Features on disk: (N_segs, 3, 1792) per file
-  — layers 6,7,8 from both streams concatenated along last axis at extraction time
-  — instruments (3, 768) | vocals (3, 1024) → (3, 1792) per segment
+Features on disk per song:
+  <stem>_instru.npy  (N_segs, 13, 768)   — all MERT hidden states
+  <stem>_vocal.npy   (N_segs, 25, 1024)  — all wav2vec2-xlsr-53 hidden states
 
 Window construction:
-  1. Take stack_size consecutive segments → (stack_size, 3, 1792)
-  2. np.concatenate along last axis → (3, 1792*stack_size)
-  3. Flatten → 3*1792*stack_size  (e.g. 3*1792*12 = 64512)
+  1. Take stack_size consecutive segments from same song
+  2. For instruments: np.concatenate → (13, 768*stack_size),  select instru_indices
+  3. For vocals:      np.concatenate → (25, 1024*stack_size), select vocal_indices
+  4. Flatten each and concatenate → final feature vector
+
+Default indices [6,7,8] for both streams (middle layers).
 
 Stride:
   overlap=False  (training)   stride = stack_size
@@ -27,6 +30,7 @@ from torch.utils.data import Dataset
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (
     FEATURES_DUAL_DIR, SPLIT9_DIR,
+    MERT_LAYERS, VOCAL_LAYERS,
     LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, CLASS_COORDS,
 )
 
@@ -74,28 +78,33 @@ def _load_split_metadata(split: str) -> list:
 class NavahiDualDataset(Dataset):
     def __init__(
         self,
-        split:      str  = "train",
-        stack_size: int  = 12,
-        overlap:    bool = False,
+        split:          str  = "train",
+        stack_size:     int  = 12,
+        overlap:        bool = False,
+        instru_indices: list = None,
+        vocal_indices:  list = None,
     ):
         assert split in ("train", "val", "test")
-        self.stack_size = stack_size
+        self.stack_size     = stack_size
+        self.instru_indices = instru_indices if instru_indices is not None else MERT_LAYERS
+        self.vocal_indices  = vocal_indices  if vocal_indices  is not None else VOCAL_LAYERS
         stride = 1 if overlap else stack_size
 
-        self.samples = []  # (feat_path, start, label, coords)
+        self.samples = []  # (instru_path, vocal_path, start, label, coords)
         feat_dir  = os.path.join(FEATURES_DUAL_DIR, split)
         metadata  = _load_split_metadata(split)
         missing   = 0
 
         for stem, label, coords in metadata:
-            feat_path = os.path.join(feat_dir, stem + ".npy")
-            if not os.path.exists(feat_path):
+            instru_path = os.path.join(feat_dir, stem + "_instru.npy")
+            vocal_path  = os.path.join(feat_dir, stem + "_vocal.npy")
+            if not os.path.exists(instru_path) or not os.path.exists(vocal_path):
                 missing += 1
                 continue
-            n_segs = np.load(feat_path, mmap_mode="r").shape[0]
+            n_segs = np.load(instru_path, mmap_mode="r").shape[0]
             start = 0
             while start + stack_size <= n_segs:
-                self.samples.append((feat_path, start, label, coords))
+                self.samples.append((instru_path, vocal_path, start, label, coords))
                 start += stride
 
         if missing:
@@ -106,12 +115,23 @@ class NavahiDualDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        feat_path, start, label, coords = self.samples[idx]
-        feats  = np.load(feat_path)                      # (N_segs, 3, 1792)
-        window = feats[start : start + self.stack_size]  # (stack_size, 3, 1792)
+        instru_path, vocal_path, start, label, coords = self.samples[idx]
 
-        # (stack_size, 3, 1792) → concat along last axis → (3, 1792*stack_size)
-        stacked = np.concatenate(window, axis=-1)
+        instru = np.load(instru_path)                        # (N_segs, 13, 768)
+        vocal  = np.load(vocal_path)                         # (N_segs, 25, 1024)
 
-        x = torch.from_numpy(stacked.reshape(-1).astype(np.float32))
-        return x, label, torch.from_numpy(coords)
+        iw = instru[start : start + self.stack_size]         # (W, 13, 768)
+        vw = vocal[start  : start + self.stack_size]         # (W, 25, 1024)
+
+        # Concatenate segments along last axis
+        istacked = np.concatenate(iw, axis=-1)               # (13, 768*W)
+        vstacked = np.concatenate(vw, axis=-1)               # (25, 1024*W)
+
+        # Select layers
+        isel = istacked[self.instru_indices, :]              # (3, 768*W)
+        vsel = vstacked[self.vocal_indices,  :]              # (3, 1024*W)
+
+        # Flatten and concatenate both streams
+        x = np.concatenate([isel.reshape(-1), vsel.reshape(-1)])  # (3*768*W + 3*1024*W,)
+
+        return torch.from_numpy(x.astype(np.float32)), label, torch.from_numpy(coords)
