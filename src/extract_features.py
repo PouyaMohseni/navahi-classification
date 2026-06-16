@@ -143,7 +143,7 @@ def process_split(split: str, file_index: dict, model, processor, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--split", default="all",
-                        choices=["train", "val", "test", "all"])
+                        choices=["train", "val", "test", "test_simplified", "all"])
     parser.add_argument("--device", default="auto")
     args = parser.parse_args()
 
@@ -162,7 +162,7 @@ def main():
     model = AutoModel.from_pretrained(MERT_MODEL, trust_remote_code=True).to(device).eval()
     processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL, trust_remote_code=True)
 
-    splits = ["train", "val", "test"] if args.split == "all" else [args.split]
+    splits = ["train", "val", "test", "test_simplified"] if args.split == "all" else [args.split]
     for split in splits:
         process_split(split, file_index, model, processor, device)
 
