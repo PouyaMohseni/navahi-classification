@@ -100,7 +100,8 @@ def embed_mert_seg(seg: np.ndarray, model, processor, device, layers: list) -> n
 @torch.no_grad()
 def embed_wav2vec_seg(seg: np.ndarray, model, processor, device, layers: list) -> np.ndarray:
     """(3, 1024) — selected wav2vec2 hidden states, mean-pooled over time."""
-    inputs = processor(seg, sampling_rate=MERT_SAMPLE_RATE,
+    seg_16k = librosa.resample(seg, orig_sr=MERT_SAMPLE_RATE, target_sr=16000)
+    inputs = processor(seg_16k, sampling_rate=16000,
                        return_tensors="pt", padding=True)
     inputs = {k: v.to(device) for k, v in inputs.items()}
     out = model(**inputs, output_hidden_states=True)
