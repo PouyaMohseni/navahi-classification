@@ -83,7 +83,7 @@ DUAL_FEATURE_DIM = (len(MERT_LAYERS) * EMBED_DIM + len(VOCAL_LAYERS) * VOCAL_EMB
 
 # ── Training ───────────────────────────────────────────────────────────────────
 BATCH_SIZE    = 32
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 5e-5
 NUM_EPOCHS    = 10
 LAMBDA_REG    = 1.0
 SEED          = 42

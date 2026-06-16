@@ -63,9 +63,15 @@ def _load_split_metadata(split: str) -> list:
     fn_col, genre_col = h.index("File Name"), h.index("Genre")
     lat_col  = h.index("Genre_x") if "Genre_x" in h else h.index("State_x")
     lon_col  = h.index("Genre_y") if "Genre_y" in h else h.index("State_y")
+    sel_col  = h.index("Select")  if "Select"  in h else None
+    sel2_col = h.index("Select2") if "Select2" in h else None
 
     records = []
     for r in rows[1:]:
+        if sel_col  is not None and r[sel_col]  == 0:
+            continue
+        if sel2_col is not None and r[sel2_col] == 0:
+            continue
         fname, genre = r[fn_col], r[genre_col]
         if not fname or genre not in _GENRE_TO_LABEL:
             continue
