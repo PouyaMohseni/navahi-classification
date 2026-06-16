@@ -133,7 +133,7 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", default=os.path.join(PROJECT_ROOT, "checkpoints", "best_model.pt"))
-    parser.add_argument("--split",       default="test", choices=["train", "val", "test"])
+    parser.add_argument("--split",       default="test", choices=["train", "val", "test", "test_simplified"])
     parser.add_argument("--dual",        action="store_true")
     parser.add_argument("--window_size", type=int, default=EVAL_WINDOW_SIZE,
                         help="Number of 5s segments per eval window (12=60s, 6=30s)")

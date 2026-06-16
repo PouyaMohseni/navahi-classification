@@ -61,7 +61,8 @@ def _load_split_metadata(split: str) -> list:
     rows = list(ws.iter_rows(values_only=True))
     h = list(rows[0])
     fn_col, genre_col = h.index("File Name"), h.index("Genre")
-    lat_col, lon_col   = h.index("State_x"),   h.index("State_y")
+    lat_col  = h.index("Genre_x") if "Genre_x" in h else h.index("State_x")
+    lon_col  = h.index("Genre_y") if "Genre_y" in h else h.index("State_y")
 
     records = []
     for r in rows[1:]:
@@ -84,7 +85,7 @@ class NavahiDataset(Dataset):
         overlap:      bool = False,
         time_indices: list = None,
     ):
-        assert split in ("train", "val", "test")
+        assert split in ("train", "val", "test", "test_simplified")
         self.stack_size   = stack_size
         self.time_indices = time_indices if time_indices is not None else MERT_LAYERS
         stride = 1 if overlap else stack_size
