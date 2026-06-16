@@ -104,7 +104,7 @@ def main():
                               shuffle=False, num_workers=4, pin_memory=pin)
 
     # Input dim = 3 * (768+1024) * stack_size = 3 * 1792 * 12 = 64512
-    input_dim = 3 * 1792 * args.stack_size
+    input_dim = train_ds[0][0].shape[0]
     model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
 
