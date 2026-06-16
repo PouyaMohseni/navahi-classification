@@ -39,7 +39,7 @@ def train_epoch(model, loader, optimizer, device):
     total_loss = cls_loss_sum = reg_loss_sum = 0
     correct = n = 0
 
-    for x, labels, coords in loader:
+    for x, labels, coords, _ in loader:
         x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         optimizer.zero_grad()
         logits, coords_pred = model(x)
@@ -68,7 +68,7 @@ def eval_epoch(model, loader, device):
     total_loss = 0
     all_preds, all_labels, all_cp, all_ct = [], [], [], []
 
-    for x, labels, coords in loader:
+    for x, labels, coords, _ in loader:
         x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         logits, coords_pred = model(x)
         loss, _, _ = model.compute_loss(logits, coords_pred, labels, coords)

@@ -90,10 +90,11 @@ class NavahiDataset(Dataset):
         self.time_indices = time_indices if time_indices is not None else MERT_LAYERS
         stride = 1 if overlap else stack_size
 
-        self.samples = []  # (feat_path, start, label, coords)
+        self.samples = []  # (feat_path, start, label, coords, file_idx)
         feat_dir  = os.path.join(FEATURES_DIR, split)
         metadata  = _load_split_metadata(split)
         missing   = 0
+        file_idx  = 0
 
         for stem, label, coords in metadata:
             feat_path = os.path.join(feat_dir, stem + ".npy")
@@ -103,8 +104,9 @@ class NavahiDataset(Dataset):
             n_segs = np.load(feat_path, mmap_mode="r").shape[0]
             start = 0
             while start + stack_size <= n_segs:
-                self.samples.append((feat_path, start, label, coords))
+                self.samples.append((feat_path, start, label, coords, file_idx))
                 start += stride
+            file_idx += 1
 
         if missing:
             print(f"[NavahiDataset/{split}] {missing}/{len(metadata)} files missing "
@@ -114,7 +116,7 @@ class NavahiDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        feat_path, start, label, coords = self.samples[idx]
+        feat_path, start, label, coords, file_idx = self.samples[idx]
         feats  = np.load(feat_path)                      # (N_segs, 13, 768)
         window = feats[start : start + self.stack_size]  # (stack_size, 13, 768)
 
@@ -125,4 +127,4 @@ class NavahiDataset(Dataset):
         selected = stacked[self.time_indices, :]
 
         x = torch.from_numpy(selected.reshape(-1).astype(np.float32))
-        return x, label, torch.from_numpy(coords)
+        return x, label, torch.from_numpy(coords), file_idx

@@ -34,7 +34,7 @@ def set_seed(seed):
 def train_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = correct = n = 0
-    for x, labels, coords in loader:
+    for x, labels, coords, _ in loader:
         x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         optimizer.zero_grad()
         logits, coords_pred = model(x)
@@ -52,7 +52,7 @@ def eval_epoch(model, loader, device):
     model.eval()
     total_loss = 0
     all_logits, all_labels, all_cp, all_ct = [], [], [], []
-    for x, labels, coords in loader:
+    for x, labels, coords, _ in loader:
         x, labels, coords = x.to(device), labels.to(device), coords.to(device)
         logits, cp = model(x)
         loss, _, _ = model.compute_loss(logits, cp, labels, coords)

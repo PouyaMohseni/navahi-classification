@@ -101,18 +101,21 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
     print(f"Evaluating {split} split: {len(ds)} samples, "
           f"window={window_size}×5s={window_size*5}s, dual={dual}")
 
-    all_preds, all_labels, all_cp, all_ct = [], [], [], []
-    for x, labels, coords in loader:
+    all_preds, all_labels, all_cp, all_ct, all_fidx = [], [], [], [], []
+    for batch in loader:
+        x, labels, coords, fidx = batch
         logits, cp = model(x.to(device))
         all_preds.append(logits.cpu())
         all_labels.append(labels)
         all_cp.append(cp.cpu())
         all_ct.append(coords)
+        all_fidx.append(fidx)
 
     all_preds  = torch.cat(all_preds)
     all_labels = torch.cat(all_labels)
     all_cp     = torch.cat(all_cp)
     all_ct     = torch.cat(all_ct)
+    all_fidx   = torch.cat(all_fidx).numpy()
 
     m = compute_metrics(all_preds, all_labels, all_cp, all_ct)
     print_metrics(m, header=f"{window_size*5}s windows — {os.path.basename(checkpoint_path)}")
@@ -125,6 +128,26 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
         if mask.sum() == 0:
             continue
         cls_acc = (preds_np[mask] == c).mean()
+        print(f"  {CLASS_NAMES[c]:<35} {cls_acc*100:5.1f}%  (n={mask.sum()})")
+
+    # Majority vote per file
+    print("\n=== Majority vote (per file) ===")
+    file_preds, file_labels = [], []
+    for fid in np.unique(all_fidx):
+        mask = all_fidx == fid
+        vote = np.bincount(preds_np[mask]).argmax()
+        file_preds.append(vote)
+        file_labels.append(labels_np[mask][0])
+    file_preds  = np.array(file_preds)
+    file_labels = np.array(file_labels)
+    mv_acc = (file_preds == file_labels).mean()
+    print(f"  Files: {len(file_labels)}   Accuracy: {mv_acc:.4f}  ({mv_acc*100:.2f}%)")
+    print("\n  Per-class (majority vote):")
+    for c in range(NUM_CLASSES):
+        mask = file_labels == c
+        if mask.sum() == 0:
+            continue
+        cls_acc = (file_preds[mask] == c).mean()
         print(f"  {CLASS_NAMES[c]:<35} {cls_acc*100:5.1f}%  (n={mask.sum()})")
 
     return m

@@ -90,10 +90,11 @@ class NavahiDualDataset(Dataset):
         self.vocal_indices  = vocal_indices  if vocal_indices  is not None else VOCAL_LAYERS
         stride = 1 if overlap else stack_size
 
-        self.samples = []  # (instru_path, vocal_path, start, label, coords)
+        self.samples = []  # (instru_path, vocal_path, start, label, coords, file_idx)
         feat_dir  = os.path.join(FEATURES_DUAL_DIR, split)
         metadata  = _load_split_metadata(split)
         missing   = 0
+        file_idx  = 0
 
         for stem, label, coords in metadata:
             instru_path = os.path.join(feat_dir, stem + "_instru.npy")
@@ -104,8 +105,9 @@ class NavahiDualDataset(Dataset):
             n_segs = np.load(instru_path, mmap_mode="r").shape[0]
             start = 0
             while start + stack_size <= n_segs:
-                self.samples.append((instru_path, vocal_path, start, label, coords))
+                self.samples.append((instru_path, vocal_path, start, label, coords, file_idx))
                 start += stride
+            file_idx += 1
 
         if missing:
             print(f"[NavahiDualDataset/{split}] {missing}/{len(metadata)} files missing "
@@ -115,7 +117,7 @@ class NavahiDualDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        instru_path, vocal_path, start, label, coords = self.samples[idx]
+        instru_path, vocal_path, start, label, coords, file_idx = self.samples[idx]
 
         instru = np.load(instru_path)                        # (N_segs, 13, 768)
         vocal  = np.load(vocal_path)                         # (N_segs, 25, 1024)
@@ -134,4 +136,4 @@ class NavahiDualDataset(Dataset):
         # Flatten and concatenate both streams
         x = np.concatenate([isel.reshape(-1), vsel.reshape(-1)])  # (3*768*W + 3*1024*W,)
 
-        return torch.from_numpy(x.astype(np.float32)), label, torch.from_numpy(coords)
+        return torch.from_numpy(x.astype(np.float32)), label, torch.from_numpy(coords), file_idx
