@@ -31,17 +31,27 @@ from model import NavahiClassifier
 from evaluate import compute_metrics
 
 # ── Parameter grid ────────────────────────────────────────────────────────────
-LRATES     = [1e-4, 5e-5, 2e-5]          # from paper's grid search
-LAMBDAS    = [0.0,  0.5,  1.0]           # reg loss weight (Table 3)
-LAYER_SETS = [                            # MERT/wav2vec2 layer selection (Table 3)
-    {"name": "mid",  "idx": [6, 7, 8]},
-    {"name": "high", "idx": [9, 10, 11]},
-    {"name": "low",  "idx": [3, 4, 5]},
+LRATES  = [1e-4, 5e-5, 2e-5]   # from paper's grid search
+LAMBDAS = [0.0,  0.5,  1.0]    # reg loss weight (Table 3)
+
+# Layer sets use model-proportional positions:
+#   MERT:        13 layers total (0=embed, 1-12=transformer)
+#   wav2vec2-xlsr-53: 25 layers total (0=CNN,  1-24=transformer)
+# "low/mid/high" map to the same relative depth in each model.
+LAYER_SETS = [
+    {"name": "low",  "instru": [3, 4, 5],   "vocal": [6,  7,  8]},   # ~25% depth
+    {"name": "mid",  "instru": [6, 7, 8],   "vocal": [12, 13, 14]},  # ~50% depth
+    {"name": "high", "instru": [9, 10, 11], "vocal": [19, 20, 21]},  # ~75% depth
 ]
-CLS_WEIGHT = 2.5                          # fixed (same as single-stream best)
+CLS_WEIGHT = 2.5                # fixed (same as single-stream best)
 
 GRID = [
-    {"lr": lr, "lambda_reg": lam, "layer_name": ls["name"], "layers": ls["idx"]}
+    {
+        "lr": lr, "lambda_reg": lam,
+        "layer_name":   ls["name"],
+        "instru_layers": ls["instru"],
+        "vocal_layers":  ls["vocal"],
+    }
     for lr  in LRATES
     for lam in LAMBDAS
     for ls  in LAYER_SETS
@@ -69,8 +79,8 @@ def _majority_vote(logits_cat, labels_cat, fidx_np):
 
 def _eval_split(model, split, params, stack_size, device):
     ds = NavahiDualDataset(split, stack_size=stack_size, overlap=True,
-                           instru_indices=params["layers"],
-                           vocal_indices=params["layers"])
+                           instru_indices=params["instru_layers"],
+                           vocal_indices=params["vocal_layers"])
     if len(ds) == 0:
         print(f"  [{split}] 0 samples — skipping")
         return None
@@ -116,11 +126,11 @@ def run(run_idx, output_dir, epochs, stack_size):
     print(f"Device: {device}")
 
     train_ds = NavahiDualDataset("train", stack_size=stack_size, overlap=False,
-                                  instru_indices=params["layers"],
-                                  vocal_indices=params["layers"])
+                                  instru_indices=params["instru_layers"],
+                                  vocal_indices=params["vocal_layers"])
     val_ds   = NavahiDualDataset("val",   stack_size=stack_size, overlap=True,
-                                  instru_indices=params["layers"],
-                                  vocal_indices=params["layers"])
+                                  instru_indices=params["instru_layers"],
+                                  vocal_indices=params["vocal_layers"])
     if len(train_ds) == 0:
         print("ERROR: no training samples — check NAVAHI_FEATURES_DUAL_DIR.")
         return None
@@ -179,8 +189,8 @@ def run(run_idx, output_dir, epochs, stack_size):
     model.load_state_dict(ckpt["model_state"])
     model.eval()
 
-    # serialize params (lists → strings for JSON)
-    params_json = {k: (str(v) if isinstance(v, list) else v) for k, v in params.items()}
+    params_json = {k: (str(v) if isinstance(v, list) else v)
+                   for k, v in params.items()}
     result = {"run_idx": run_idx, "params": params_json, "best_val_acc": best_val_acc}
 
     for split in ["test", "test_simplified"]:
