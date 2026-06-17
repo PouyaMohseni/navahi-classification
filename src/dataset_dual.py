@@ -99,7 +99,8 @@ class NavahiDualDataset(Dataset):
         stride = 1 if overlap else stack_size
 
         self.samples = []  # (instru_path, vocal_path, start, label, coords, file_idx)
-        feat_dir  = os.path.join(FEATURES_DUAL_DIR, split)
+        feat_split = "test" if split == "test_simplified" else split
+        feat_dir  = os.path.join(FEATURES_DUAL_DIR, feat_split)
         metadata  = _load_split_metadata(split)
         missing   = 0
         file_idx  = 0
