@@ -47,11 +47,8 @@ _GENRE_TO_LABEL = {
 
 
 def _normalize_coords(lat: float, lon: float) -> np.ndarray:
-    return np.clip(
-        np.array([(lat - LAT_MIN) / (LAT_MAX - LAT_MIN),
-                  (lon - LON_MIN) / (LON_MAX - LON_MIN)], dtype=np.float32),
-        0.0, 1.0,
-    )
+    return np.array([(lat - LAT_MIN) / (LAT_MAX - LAT_MIN),
+                     (lon - LON_MIN) / (LON_MAX - LON_MIN)], dtype=np.float32)
 
 
 def _load_split_metadata(split: str) -> list:
