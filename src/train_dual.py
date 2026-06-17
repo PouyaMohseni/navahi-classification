@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--batch_size",  type=int,   default=BATCH_SIZE)
     parser.add_argument("--lr",          type=float, default=LEARNING_RATE)
     parser.add_argument("--lambda_reg",  type=float, default=LAMBDA_REG)
+    parser.add_argument("--cls_weight",  type=float, default=2.5)
     parser.add_argument("--output",      default=CHECKPOINTS_DUAL_DIR)
     parser.add_argument("--device",      default="auto")
     args = parser.parse_args()
@@ -101,16 +102,14 @@ def main():
     print(f"Train: {len(train_ds)} windows,  Val: {len(val_ds)} windows  "
           f"(stack_size={args.stack_size})")
 
-    pin = device.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True,  num_workers=4, pin_memory=pin)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, num_workers=4, pin_memory=pin)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False)
 
     # Input dim = 3 * (768+1024) * stack_size = 3 * 1792 * 12 = 64512
     input_dim = train_ds[0][0].shape[0]
     torch.manual_seed(SEED)
-    model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg).to(device)
+    model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg,
+                             cls_weight=args.cls_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
 
     best_val_acc = 0.0

@@ -92,7 +92,7 @@ class NavahiDualDataset(Dataset):
         instru_indices: list = None,
         vocal_indices:  list = None,
     ):
-        assert split in ("train", "val", "test")
+        assert split in ("train", "val", "test", "test_simplified")
         self.stack_size     = stack_size
         self.instru_indices = instru_indices if instru_indices is not None else MERT_LAYERS
         self.vocal_indices  = vocal_indices  if vocal_indices  is not None else VOCAL_LAYERS
