@@ -60,8 +60,12 @@ def _load_split_metadata(split: str) -> list:
     rows = list(ws.iter_rows(values_only=True))
     h = list(rows[0])
     fn_col, genre_col = h.index("File Name"), h.index("Genre")
-    lat_col  = h.index("Genre_x") if "Genre_x" in h else h.index("State_x")
-    lon_col  = h.index("Genre_y") if "Genre_y" in h else h.index("State_y")
+    if split == "test_simplified":
+        lat_col = h.index("Genre_x")
+        lon_col = h.index("Genre_y")
+    else:
+        lat_col = h.index("State_x")
+        lon_col = h.index("State_y")
     sel_col  = h.index("Select")  if "Select"  in h else None
     sel2_col = h.index("Select2") if "Select2" in h else None
 
