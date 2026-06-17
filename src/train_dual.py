@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import os
+import random
 import sys
 
 import numpy as np
@@ -27,8 +28,11 @@ from evaluate import compute_metrics, print_metrics
 
 
 def set_seed(seed):
-    torch.manual_seed(seed)
+    random.seed(seed)
     np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def train_epoch(model, loader, optimizer, device):
@@ -105,6 +109,7 @@ def main():
 
     # Input dim = 3 * (768+1024) * stack_size = 3 * 1792 * 12 = 64512
     input_dim = train_ds[0][0].shape[0]
+    torch.manual_seed(SEED)
     model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
 

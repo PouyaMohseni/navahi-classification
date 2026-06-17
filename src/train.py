@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import os
+import random
 import sys
 
 import numpy as np
@@ -30,8 +31,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def set_seed(seed: int):
-    torch.manual_seed(seed)
+    random.seed(seed)
     np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def train_epoch(model, loader, optimizer, device):
@@ -122,6 +126,7 @@ def main():
                               shuffle=False, num_workers=4, pin_memory=pin)
 
     input_dim = len(train_ds.time_indices) * 768 * args.stack_size
+    torch.manual_seed(SEED)
     model = NavahiClassifier(input_dim=input_dim, lambda_reg=args.lambda_reg,
                              cls_weight=args.cls_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
