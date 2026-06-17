@@ -43,9 +43,9 @@ def compute_metrics(logits, labels, coords_pred, coords_true) -> dict:
         "acc":          float((preds == labels_np).mean()),
         "balanced_acc": float(balanced_accuracy_score(labels_np, preds)),
         "top2_acc":     float(top2_acc),
-        "precision":    float(precision_score(labels_np, preds, average="weighted", zero_division=0)),
-        "recall":       float(recall_score(labels_np, preds, average="weighted", zero_division=0)),
-        "f1":           float(f1_score(labels_np, preds, average="weighted", zero_division=0)),
+        "precision":    float(precision_score(labels_np, preds, average="macro", zero_division=0)),
+        "recall":       float(recall_score(labels_np, preds, average="macro", zero_division=0)),
+        "f1":           float(f1_score(labels_np, preds, average="macro", zero_division=0)),
         "reg_mse":      float(np.mean((cp - ct) ** 2)),
         "reg_r2":       float(r2_score(ct, cp)),
     }
@@ -95,9 +95,7 @@ def evaluate(checkpoint_path: str, split: str = "test", dual: bool = False,
               "Features missing — run extract_features.py first.")
         return None
 
-    pin = device.type == "cuda"
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False,
-                        num_workers=4, pin_memory=pin)
+    loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=False)
     print(f"Evaluating {split} split: {len(ds)} samples, "
           f"window={window_size}×5s={window_size*5}s, dual={dual}")
 

@@ -119,11 +119,8 @@ def main():
     print(f"Train: {len(train_ds)} windows,  Val: {len(val_ds)} windows  "
           f"(stack_size={args.stack_size})")
 
-    pin = device.type == "cuda"
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True,  num_workers=4, pin_memory=pin)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, num_workers=4, pin_memory=pin)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False)
 
     input_dim = len(train_ds.time_indices) * 768 * args.stack_size
     torch.manual_seed(SEED)
