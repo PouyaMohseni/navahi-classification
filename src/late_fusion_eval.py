@@ -30,10 +30,12 @@ import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
+from sklearn.metrics import (balanced_accuracy_score,
+                              precision_score, recall_score, f1_score)
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from config import BATCH_SIZE, EVAL_WINDOW_SIZE, FEATURE_DIM
+from config import BATCH_SIZE, EVAL_WINDOW_SIZE, FEATURE_DIM, CLASS_NAMES, NUM_CLASSES
 from dataset import NavahiDataset
 from dataset_vocal import NavahiVocalDataset
 from model import NavahiClassifier
@@ -126,6 +128,86 @@ def fuse(ml, vl, labels, fidx):
     return out
 
 
+def _fuse_one(strategy, ml, vl, labels, fidx):
+    """Apply a single strategy. Returns (file_preds, file_labels)."""
+    mn, vn = ml.numpy(), vl.numpy()
+    mp = F.softmax(ml, dim=1).numpy()
+    vp = F.softmax(vl, dim=1).numpy()
+    mp_preds = mn.argmax(1)
+    vp_preds = vn.argmax(1)
+
+    if strategy == "01_mert_only":
+        w_p, w_f, w_l = mp_preds, fidx, labels
+    elif strategy == "02_vocal_only":
+        w_p, w_f, w_l = vp_preds, fidx, labels
+    elif "_logit_" in strategy:
+        alpha = int(strategy.split("_")[2][:-1]) / 100   # "70m" → 0.7
+        w_p, w_f, w_l = (alpha*mn + (1-alpha)*vn).argmax(1), fidx, labels
+    elif strategy == "10_softmax_avg":
+        w_p, w_f, w_l = (mp + vp).argmax(1), fidx, labels
+    elif strategy == "11_softmax_prod":
+        w_p, w_f, w_l = (mp * vp).argmax(1), fidx, labels
+    elif strategy == "12_max_conf":
+        w_p = np.where(mp.max(1) >= vp.max(1), mp_preds, vp_preds)
+        w_f, w_l = fidx, labels
+    elif strategy == "13_vote_equal":
+        w_p = np.concatenate([mp_preds, vp_preds])
+        w_f = np.concatenate([fidx,     fidx])
+        w_l = np.concatenate([labels,   labels])
+    elif strategy == "14_vote_2mert_1vocal":
+        w_p = np.concatenate([mp_preds, mp_preds, vp_preds])
+        w_f = np.concatenate([fidx,     fidx,     fidx])
+        w_l = np.concatenate([labels,   labels,   labels])
+    elif strategy == "15_vote_1mert_2vocal":
+        w_p = np.concatenate([mp_preds, vp_preds, vp_preds])
+        w_f = np.concatenate([fidx,     fidx,     fidx])
+        w_l = np.concatenate([labels,   labels,   labels])
+    elif strategy == "16_borda_count":
+        fp, fl = [], []
+        for fid in np.unique(fidx):
+            m = fidx == fid
+            mr = np.argsort(np.argsort(mn[m].mean(0)))
+            vr = np.argsort(np.argsort(vn[m].mean(0)))
+            fp.append((mr + vr).argmax()); fl.append(labels[m][0])
+        return np.array(fp), np.array(fl)
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
+
+    fp, fl = [], []
+    for fid in np.unique(w_f):
+        m = w_f == fid
+        fp.append(np.bincount(w_p[m], minlength=8).argmax())
+        fl.append(w_l[m][0])
+    return np.array(fp), np.array(fl)
+
+
+def _detailed_report(file_preds, file_labels, split, strategy, vocal_run):
+    acc  = (file_preds == file_labels).mean()
+    bal  = balanced_accuracy_score(file_labels, file_preds)
+    prec = precision_score(file_labels, file_preds, average="macro", zero_division=0)
+    rec  = recall_score(file_labels,  file_preds, average="macro", zero_division=0)
+    f1   = f1_score(file_labels,      file_preds, average="macro", zero_division=0)
+
+    # Top-2 not available at file level, note that
+    print(f"\n{'='*60}")
+    print(f"Detailed report — {split}  |  {vocal_run}  |  {strategy}")
+    print(f"{'='*60}")
+    print(f"  Files:          {len(file_labels)}")
+    print(f"  Accuracy:       {acc:.4f}  ({acc*100:.2f}%)")
+    print(f"  Balanced Acc:   {bal:.4f}  ({bal*100:.2f}%)")
+    print(f"  Precision:      {prec:.4f}  (macro)")
+    print(f"  Recall:         {rec:.4f}  (macro)")
+    print(f"  F1:             {f1:.4f}  (macro)")
+    print(f"\n  Per-class accuracy (majority vote):")
+    for c in range(NUM_CLASSES):
+        mask = file_labels == c
+        if mask.sum() == 0:
+            continue
+        cls_acc = (file_preds[mask] == c).mean()
+        print(f"    {CLASS_NAMES[c]:<35} {cls_acc*100:5.1f}%  (n={mask.sum()})")
+    print(f"{'='*60}")
+
+
 def load_model(ckpt_path, device, default_input_dim):
     ckpt  = torch.load(ckpt_path, map_location=device, weights_only=False)
     model = NavahiClassifier(input_dim=ckpt.get("input_dim", default_input_dim)).to(device)
@@ -145,6 +227,8 @@ def main():
     parser.add_argument("--stack_size", type=int, default=EVAL_WINDOW_SIZE)
     parser.add_argument("--top",        type=int, default=20,
                         help="Number of top rows to print")
+    parser.add_argument("--detail",     action="store_true",
+                        help="Print full metrics + per-class breakdown for the best result")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,6 +251,7 @@ def main():
     print(f"\nFound {len(vocal_runs)} vocal checkpoints")
 
     all_rows = []
+    vocal_logits_cache = {}   # {run_name: (logits_tensor, layers_list)}
 
     for run_name in vocal_runs:
         run_dir   = os.path.join(args.vocal_dir, run_name)
@@ -196,6 +281,7 @@ def main():
             print(f"  SKIP {run_name}: label mismatch")
             continue
 
+        vocal_logits_cache[run_name] = (vocal_logits, vocal_layers)
         strats = fuse(mert_logits, vocal_logits, mert_labels, mert_fidx)
 
         lr  = params.get("lr",         "?")
@@ -240,6 +326,12 @@ def main():
         sign  = "+" if delta >= 0 else ""
         print(f"  vs MERT-only: {mert_base*100:.2f}%  (Δ {sign}{delta*100:.2f}%)")
     print(f"{'='*55}")
+
+    if args.detail and best["vocal_run"] in vocal_logits_cache:
+        best_vl, _ = vocal_logits_cache[best["vocal_run"]]
+        fp, fl = _fuse_one(best["strategy"], mert_logits, best_vl,
+                           mert_labels, mert_fidx)
+        _detailed_report(fp, fl, args.split, best["strategy"], best["vocal_run"])
 
 
 if __name__ == "__main__":
